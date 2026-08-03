@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>今日工作日报 · Agent Pet</title>
+    <link rel="stylesheet" href="/daily-report.css">
+  </head>
+  <body>
+    <main class="report-shell">
+      <div class="report-options">
+        <span class="report-option-label">日报详略</span>
+        <div id="report-detail" class="segmented-control" role="group" aria-label="日报详略">
+          <button type="button" data-report-level="brief" aria-pressed="false">简要</button>
+          <button type="button" data-report-level="standard" aria-pressed="true">标准</button>
+          <button type="button" data-report-level="detailed" aria-pressed="false">完整</button>
+        </div>
+      </div>
+
+      <section id="report-card" class="report-card" aria-live="polite" aria-busy="true">
+        <div id="report-loading" class="report-placeholder">
+          <span class="loading-dot" aria-hidden="true"></span>
+          <span id="report-loading-label">正在读取今日工作日报</span>
+        </div>
+        <div id="report-empty" class="report-placeholder" hidden>
+          今天还没有可总结的已完成工作。
+        </div>
+        <textarea
+          id="report-output"
+          aria-label="工作日报内容"
+          spellcheck="false"
+          hidden
+        ></textarea>
+      </section>
+
+      <div class="report-information">
+        <p id="report-meta" class="report-meta"></p>
+        <p id="report-status" class="report-status" role="status"></p>
+      </div>
+      <footer class="report-actions">
+        <button id="update-report" class="secondary-button" type="button">更新日报</button>
+        <button id="copy-report" class="primary-button" type="button" disabled>复制日报</button>
+      </footer>
+    </main>
+    <script src="/daily-report.js"></script>
+  </body>
+</html>

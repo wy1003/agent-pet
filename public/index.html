@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="description"
+      content="同时查看 Codex Desktop 与 CC GUI 当前任务状态的本地任务列表。"
+    />
+    <title>Agent Pet · 任务收件箱</title>
+    <link rel="stylesheet" href="/app.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="task-panel" aria-labelledby="page-title">
+        <header class="panel-header">
+          <div class="heading-group">
+            <div class="eyebrow">CODEX ACTIVITY</div>
+            <div class="title-row">
+              <h1 id="page-title">任务收件箱</h1>
+              <span id="task-count" class="count-badge" aria-label="0 项任务">0</span>
+            </div>
+          </div>
+          <div class="panel-actions">
+            <div id="connection" class="connection" data-state="connecting" role="status">
+              <span class="connection-dot" aria-hidden="true"></span>
+              <span id="connection-label">正在连接</span>
+            </div>
+            <button id="panel-settings" class="panel-icon-button panel-settings" type="button" aria-label="打开设置">
+              <span aria-hidden="true">⚙</span>
+            </button>
+            <button id="panel-close" class="panel-close" type="button" aria-label="关闭任务列表">
+              ×
+            </button>
+          </div>
+        </header>
+
+        <div class="panel-rule" aria-hidden="true"></div>
+
+        <div id="compact-toolbar" class="compact-toolbar" hidden>
+          <button id="acknowledge-all" class="acknowledge-all" type="button">全部已读</button>
+        </div>
+
+        <section id="task-list" class="task-list" aria-live="polite" aria-busy="true"></section>
+
+        <section id="empty-state" class="empty-state" hidden>
+          <div class="empty-orbit" aria-hidden="true">
+            <span class="empty-core">✓</span>
+          </div>
+          <h2>任务都处理好了</h2>
+          <p>从 Codex Desktop 或 CC GUI 发起任务后，会自动出现在这里。</p>
+        </section>
+
+        <footer class="panel-footer">
+          <span>任务结束后会保留，点击 ✓ 即可确认移除</span>
+          <button id="reconnect-button" class="text-button" type="button" hidden>重新连接</button>
+        </footer>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="alert" aria-live="assertive" hidden></div>
+  </body>
+</html>

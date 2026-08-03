@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; connect-src 'self'; img-src 'self' pet-asset:; style-src 'self'; script-src 'self'; base-uri 'none'"
+    />
+    <title>Agent Pet</title>
+    <link rel="stylesheet" href="/companion-badge.css" />
+    <script src="/pet-renderer.js" defer></script>
+    <script src="/companion-badge.js" defer></script>
+  </head>
+  <body>
+    <div class="drag-handle" aria-label="拖动任务徽标"></div>
+    <button id="badge" class="badge" type="button" data-state="connecting" aria-label="打开任务列表">
+      <span id="pet-sprite" class="pet-sprite" aria-hidden="true" hidden></span>
+      <span class="ear ear-left" aria-hidden="true"></span>
+      <span class="ear ear-right" aria-hidden="true"></span>
+      <span class="face" aria-hidden="true">
+        <span class="eye eye-left"></span>
+        <span class="eye eye-right"></span>
+        <span class="mouth"></span>
+      </span>
+      <span id="count" class="count" hidden>0</span>
+      <span id="signal" class="signal" aria-hidden="true"></span>
+    </button>
+  </body>
+</html>

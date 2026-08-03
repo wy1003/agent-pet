@@ -1,0 +1,698 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>设置 · Agent Pet</title>
+    <link rel="stylesheet" href="/settings.css" />
+    <script src="/settings.js" defer></script>
+  </head>
+  <body>
+    <div id="unavailable" class="unavailable" hidden>
+      设置页面需要从 Agent Pet 桌面程序中打开。
+    </div>
+
+    <div class="settings-layout">
+      <nav class="settings-nav" aria-label="设置分类">
+        <button class="nav-item" type="button" data-page="general" data-title="通用" aria-selected="true">
+          <span class="nav-icon" aria-hidden="true">⚙</span><span>通用</span>
+        </button>
+        <button class="nav-item" type="button" data-page="rules" data-title="提醒规则" aria-selected="false">
+          <span class="nav-icon" aria-hidden="true">◆</span><span>提醒规则</span>
+        </button>
+        <button class="nav-item" type="button" data-page="windows" data-title="系统通知" aria-selected="false">
+          <span class="nav-icon" aria-hidden="true">●</span><span>系统通知</span>
+        </button>
+        <button class="nav-item" type="button" data-page="voice" data-title="语音播报" aria-selected="false">
+          <span class="nav-icon" aria-hidden="true">◖</span><span>语音播报</span>
+        </button>
+        <button class="nav-item" type="button" data-page="mobile" data-title="远程通知" aria-selected="false">
+          <span class="nav-icon" aria-hidden="true">↗</span><span>远程通知</span>
+        </button>
+        <button class="nav-item" type="button" data-page="appearance" data-title="外观与启动" aria-selected="false">
+          <span class="nav-icon" aria-hidden="true">◐</span><span>外观与启动</span>
+        </button>
+        <button class="nav-item" type="button" data-page="community" data-title="参与共建" aria-selected="false">
+          <span class="nav-icon" aria-hidden="true">♥</span><span>参与共建</span>
+        </button>
+        <div id="save-status" class="save-status nav-save-status" data-state="loading" role="status">正在读取…</div>
+        <div class="nav-app-version" aria-label="Agent Pet 版本与更新">
+          <div class="nav-version-line">
+            <span>Agent Pet</span>
+            <strong id="app-version">v—</strong>
+          </div>
+          <p id="app-update-status" role="status">正在读取版本…</p>
+          <button id="app-update-action" class="nav-update-button" type="button" hidden>检查更新</button>
+        </div>
+      </nav>
+
+      <main class="settings-content">
+        <section id="general" class="settings-section" data-settings-page="general">
+          <div class="section-heading">
+            <div>
+              <h2>本地数据</h2>
+              <p>查看 Agent Pet 保存在本机的记录位置。</p>
+            </div>
+          </div>
+          <div class="storage-location">
+            <div class="storage-location-heading">
+              <strong>通知记录</strong>
+              <small>按月份保存为 JSONL 文件并长期保留；点击路径打开目录。</small>
+            </div>
+            <button id="notification-history-path" class="storage-path-button" type="button" disabled>
+              正在读取位置…
+            </button>
+            <p id="notification-history-location-status" class="storage-location-status" role="status"></p>
+          </div>
+        </section>
+
+        <section id="rules" class="settings-section" data-settings-page="rules" hidden>
+          <div class="section-heading">
+            <div>
+              <h2>任务事件</h2>
+              <p>决定每种任务事件是否需要提醒。</p>
+            </div>
+          </div>
+          <div class="rule-table-wrap">
+            <table class="rule-table">
+              <thead>
+                <tr>
+                  <th>任务事件</th>
+                  <th>启用提醒</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th>需要批准或回答</th>
+                  <td><input type="checkbox" data-path="rules.needs_input" aria-label="需要批准或回答时启用提醒" /></td>
+                </tr>
+                <tr>
+                  <th>任务完成</th>
+                  <td><input type="checkbox" data-path="rules.completed" aria-label="任务完成时启用提醒" /></td>
+                </tr>
+                <tr>
+                  <th>任务失败</th>
+                  <td><input type="checkbox" data-path="rules.failed" aria-label="任务失败时启用提醒" /></td>
+                </tr>
+                <tr>
+                  <th>任务中断</th>
+                  <td><input type="checkbox" data-path="rules.interrupted" aria-label="任务中断时启用提醒" /></td>
+                </tr>
+                <tr>
+                  <th>状态未知</th>
+                  <td><input type="checkbox" data-path="rules.unknown" aria-label="状态未知时启用提醒" /></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="notification-test-row">
+            <span>
+              <strong>测试完整提醒链路</strong>
+              <small id="test-notification-result">按照当前规则发送一次“任务完成”提醒。</small>
+            </span>
+            <button id="test-notification" class="secondary-button" type="button">发送测试提醒</button>
+          </div>
+        </section>
+
+        <section id="windows" class="settings-section" data-settings-page="windows" hidden>
+          <div class="section-heading">
+            <div>
+              <h2>通知行为</h2>
+              <p>控制已有桌面通知的显示方式。</p>
+            </div>
+          </div>
+          <div class="setting-list">
+            <label class="setting-row">
+              <span><strong>启用系统通知</strong><small>任务进入所选状态时显示 Windows 通知。</small></span>
+              <input type="checkbox" data-path="notifications.windows.enabled" />
+            </label>
+            <label class="setting-row">
+              <span><strong>播放系统声音</strong><small>使用 Windows 当前通知声音。</small></span>
+              <input type="checkbox" data-path="notifications.windows.playSound" />
+            </label>
+            <label class="setting-row">
+              <span><strong>仅在任务面板隐藏时通知</strong><small>正在查看任务时减少重复打扰。</small></span>
+              <input type="checkbox" data-path="notifications.windows.onlyWhenPanelHidden" />
+            </label>
+            <label class="setting-row">
+              <span><strong>点击通知打开任务列表</strong><small>从通知直接回到当前任务。</small></span>
+              <input type="checkbox" data-path="notifications.windows.openPanelOnClick" />
+            </label>
+          </div>
+        </section>
+
+        <section id="voice" class="settings-section" data-settings-page="voice" hidden>
+          <div class="section-heading">
+            <div>
+              <div class="heading-line"><h2>语音设置</h2><span id="voice-capability" class="planned-badge">检测中</span></div>
+              <p>选择系统语音，或连接用户自行运行的 GPT-SoVITS 本地服务。</p>
+            </div>
+            <label class="compact-toggle"><input type="checkbox" data-path="notifications.voice.enabled" /> 启用</label>
+          </div>
+          <div class="field-grid">
+            <div class="field full-width">
+              <span>语音引擎</span>
+              <div class="voice-engine-switch" role="group" aria-label="语音引擎">
+                <button type="button" data-voice-engine-option="windows" aria-pressed="false">
+                  <strong>Windows 系统语音</strong>
+                  <small>无需额外服务</small>
+                </button>
+                <button type="button" data-voice-engine-option="gpt-sovits" aria-pressed="false">
+                  <strong>GPT-SoVITS</strong>
+                  <small>使用已导入音色</small>
+                </button>
+              </div>
+              <input id="voice-engine" type="hidden" data-path="notifications.voice.engine" value="windows" />
+            </div>
+
+            <form id="voice-style-form" class="voice-settings-group voice-style-group full-width">
+              <div class="voice-group-heading">
+                <span><strong>播报风格</strong><small>设置语音提醒如何称呼你，以及表达任务状态的语气。</small></span>
+              </div>
+              <div class="field-grid voice-style-grid">
+                <label class="field">
+                  <span>对你的称呼</span>
+                  <input type="text" maxlength="24" data-path="notifications.voice.style.addressee" />
+                  <small>留空时不会强行加入称呼。</small>
+                </label>
+                <label class="field">
+                  <span>助手自称</span>
+                  <input type="text" maxlength="24" data-path="notifications.voice.style.assistantName" />
+                  <small>留空时不会使用个性化自称。</small>
+                </label>
+                <label class="field full-width">
+                  <span>表达语气</span>
+                  <select data-path="notifications.voice.style.tone">
+                    <option value="cute">可爱活泼</option>
+                    <option value="warm">温柔陪伴</option>
+                    <option value="concise">简洁直接</option>
+                    <option value="formal">正式稳重</option>
+                    <option value="custom">自定义</option>
+                  </select>
+                </label>
+                <label class="field full-width">
+                  <span>风格补充</span>
+                  <input type="text" maxlength="240" placeholder="例如：自然一点，不要过度撒娇" data-path="notifications.voice.style.customInstruction" />
+                </label>
+              </div>
+              <label class="service-auto-start style-project-toggle">
+                <span><strong>播报项目名称</strong><small>打开后，文案可以自然地提到当前项目。</small></span>
+                <input type="checkbox" data-path="notifications.voice.style.includeProjectName" />
+              </label>
+              <div class="copywriter-mode" aria-label="文案生成方式">
+                <span><strong>文案生成方式</strong><small>Codex 会在后台静默维护本地文案池。</small></span>
+                <span class="read-only-badge">Codex 自动生成</span>
+              </div>
+              <div class="style-save-actions">
+                <button id="save-voice-style" class="primary-button style-save-button" type="submit" disabled>保存设置</button>
+              </div>
+            </form>
+
+            <div class="voice-engine-panel full-width" data-voice-engine-panel="windows">
+              <div class="field-grid">
+                <label class="field full-width">
+                  <span>系统音色</span>
+                  <select data-path="notifications.voice.voiceId">
+                    <option value="system">跟随系统默认语音</option>
+                  </select>
+                  <small id="voice-help">正在读取 Windows 可用音色…</small>
+                </label>
+                <label class="field">
+                  <span>语速 <output data-output-for="notifications.voice.rate">0</output></span>
+                  <input type="range" min="-5" max="5" step="1" data-path="notifications.voice.rate" />
+                </label>
+                <label class="field">
+                  <span>音调 <output data-output-for="notifications.voice.pitch">1</output></span>
+                  <input type="range" min="0.5" max="2" step="0.1" data-path="notifications.voice.pitch" />
+                </label>
+              </div>
+            </div>
+
+            <div class="voice-engine-panel full-width" data-voice-engine-panel="gpt-sovits" hidden>
+              <div class="engine-note">
+                <span class="intro-icon" aria-hidden="true">i</span>
+                <p>添加音色时会把模型和参考音频复制到应用音色库，源文件移动或删除不会影响使用。</p>
+              </div>
+              <section class="voice-settings-group">
+                <div class="voice-group-heading">
+                  <span><strong>本地服务</strong><small>管理语音引擎的运行状态和启动方式。</small></span>
+                </div>
+                <div class="service-summary">
+                  <span>
+                    <span class="service-title-line">
+                      <strong>GPT-SoVITS</strong>
+                      <span id="gpt-sovits-service-status" class="service-status" data-state="checking">检测中</span>
+                    </span>
+                    <small id="gpt-sovits-service-description">正在检测本地服务状态。</small>
+                  </span>
+                  <div class="service-actions">
+                    <button id="manage-gpt-sovits-service" class="inline-button" type="button">安装或启动</button>
+                    <button id="stop-gpt-sovits-service" class="inline-button" type="button" hidden>停止</button>
+                    <button id="open-gpt-sovits-log" class="text-button" type="button">查看日志</button>
+                    <button id="remove-gpt-sovits-service" class="text-button danger-text" type="button">清理服务</button>
+                  </div>
+                </div>
+                <label class="service-auto-start">
+                  <span><strong>随应用自动启动</strong><small>打开应用时在后台启动服务，退出应用时同步停止。</small></span>
+                  <input type="checkbox" data-path="notifications.voice.gptSovits.autoStartService" />
+                </label>
+              </section>
+
+              <details class="advanced-settings runtime-settings">
+                <summary>
+                  <span><strong>运行环境</strong><small id="gpt-sovits-runtime-summary">正在读取计算设备</small></span>
+                </summary>
+                <div class="advanced-settings-body">
+                  <div class="runtime-device-row">
+                    <label class="field">
+                      <span>计算设备</span>
+                      <select id="gpt-sovits-runtime-device"><option value="CPU">CPU</option></select>
+                    </label>
+                    <button id="reconfigure-gpt-sovits-device" class="inline-button" type="button" disabled>应用更改</button>
+                  </div>
+                  <small id="gpt-sovits-runtime-help" class="runtime-help">设备变更需要重新配置运行依赖。</small>
+                </div>
+              </details>
+
+              <section class="voice-settings-group">
+                <div class="voice-group-heading">
+                  <span><strong>音色库</strong><small>选择已导入音色，或添加一套新的模型与参考音频。</small></span>
+                </div>
+                <div class="field voice-library-field">
+                  <div class="voice-library-row">
+                    <select id="gpt-sovits-voice" aria-label="GPT-SoVITS 音色">
+                      <option value="">尚未添加音色</option>
+                    </select>
+                    <button id="add-gpt-sovits-voice" class="inline-button" type="button">添加音色</button>
+                  </div>
+                  <small id="voice-library-help">尚未添加音色。点击“添加音色”导入一个音色包。</small>
+                  <div class="voice-library-actions">
+                    <button id="edit-gpt-sovits-voice" class="text-button" type="button" disabled>编辑</button>
+                    <button id="remove-gpt-sovits-voice" class="text-button danger-text" type="button" disabled>删除</button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="voice-settings-group compact-group">
+                <div class="voice-group-heading">
+                  <span><strong>合成参数</strong><small>控制当前音色的生成速度。</small></span>
+                </div>
+                <label class="field">
+                  <span>合成语速 <output data-output-for="notifications.voice.gptSovits.speed">1</output></span>
+                  <input type="range" min="0.5" max="2" step="0.05" data-path="notifications.voice.gptSovits.speed" />
+                </label>
+              </section>
+
+              <details class="advanced-settings">
+                <summary>
+                  <span><strong>高级连接</strong><small>服务地址、播报语言和连接测试</small></span>
+                </summary>
+                <div class="advanced-settings-body field-grid gpt-sovits-grid">
+                  <label class="field full-width">
+                    <span>服务地址</span>
+                    <input type="url" spellcheck="false" data-path="notifications.voice.gptSovits.baseUrl" />
+                    <small>本机默认地址为 http://127.0.0.1:9880，使用远程服务时再修改。</small>
+                  </label>
+                  <label class="field full-width">
+                    <span>播报语言</span>
+                    <select data-path="notifications.voice.gptSovits.targetLanguage">
+                      <option value="zh">中文</option><option value="ja">日语</option><option value="en">英语</option>
+                      <option value="ko">韩语</option><option value="yue">粤语</option><option value="auto">自动</option>
+                    </select>
+                  </label>
+                  <div class="engine-actions full-width">
+                    <button id="test-gpt-sovits-connection" class="secondary-button" type="button">测试连接</button>
+                  </div>
+                  <small id="gpt-sovits-help" class="engine-help full-width">尚未测试 GPT-SoVITS 服务。</small>
+                </div>
+              </details>
+            </div>
+
+            <section class="voice-settings-group full-width output-settings-group">
+              <div class="voice-group-heading">
+                <span><strong>播报与试听</strong><small>适用于当前选择的语音引擎。</small></span>
+              </div>
+              <div class="field-grid">
+                <label class="field full-width">
+                  <span>音量 <output data-output-for="notifications.voice.volume">100</output>%</span>
+                  <input type="range" min="0" max="100" step="5" data-path="notifications.voice.volume" />
+                </label>
+                <label class="field full-width">
+                  <span>播报内容</span>
+                  <select data-path="notifications.voice.contentLevel">
+                    <option value="brief">简短：只播报任务状态</option>
+                    <option value="standard">标准：项目名称和任务状态</option>
+                    <option value="detailed">详细：包含截断后的任务标题</option>
+                  </select>
+                </label>
+                <label class="field full-width">
+                  <span>试听文本</span>
+                  <input id="voice-preview-text" type="text" maxlength="120" value="任务已经完成。" />
+                </label>
+              </div>
+            </section>
+          </div>
+          <button id="test-voice" class="secondary-button" type="button" disabled>试听语音</button>
+        </section>
+
+        <section id="mobile" class="settings-section" data-settings-page="mobile" hidden>
+          <div class="section-heading">
+            <div>
+              <h2>远程通知</h2>
+              <p>连接外部服务，在离开电脑时也能收到任务进展。</p>
+            </div>
+            <label class="compact-toggle"><input type="checkbox" data-path="notifications.mobile.enabled" /> 启用</label>
+          </div>
+          <section class="remote-services" aria-labelledby="remote-services-title">
+            <div class="remote-group-heading">
+              <div>
+                <h3 id="remote-services-title">可连接的服务</h3>
+                <p>账号凭据只保存在本机，可随时解除绑定。</p>
+              </div>
+            </div>
+
+            <article id="weixin-service-card" class="integration-card" data-state="disconnected">
+              <div class="integration-service">
+                <div class="weixin-mark" aria-hidden="true">
+                  <span class="weixin-bubble weixin-bubble-primary"></span>
+                  <span class="weixin-bubble weixin-bubble-secondary"></span>
+                </div>
+                <div class="integration-copy">
+                  <div class="integration-title-line">
+                    <h3>微信</h3>
+                    <span class="experimental-badge">实验性</span>
+                    <span id="weixin-connection-status" class="connection-status" data-state="disconnected">未连接</span>
+                  </div>
+                  <p>个人微信通知</p>
+                  <small id="weixin-connection-description">扫码连接后，可将任务结果发送到微信。</small>
+                  <small id="weixin-account-label" class="integration-account" hidden></small>
+                </div>
+              </div>
+              <div class="integration-actions">
+                <button id="weixin-connect" class="primary-button" type="button">连接微信</button>
+                <button id="weixin-continue" class="secondary-button" type="button" hidden>查看连接</button>
+                <button id="weixin-reconnect" class="secondary-button" type="button" hidden>重新连接</button>
+                <button id="weixin-test" class="secondary-button" type="button" disabled>发送测试</button>
+                <button id="weixin-disconnect" class="text-button danger-text" type="button" hidden>解除绑定</button>
+              </div>
+              <p id="weixin-action-result" class="integration-result" role="status"></p>
+            </article>
+          </section>
+
+          <section class="remote-content-settings" aria-labelledby="remote-content-title">
+            <div class="remote-group-heading">
+              <div>
+                <h3 id="remote-content-title">通知内容</h3>
+                <p>控制远程消息中包含的信息量。</p>
+              </div>
+            </div>
+            <label class="field full-width">
+              <span>内容等级</span>
+              <select data-path="notifications.mobile.contentLevel">
+                <option value="brief">简短：只发送任务状态</option>
+                <option value="standard">标准：项目、任务标题和状态</option>
+                <option value="detailed">详细：包含最终回复摘要</option>
+              </select>
+            </label>
+          </section>
+        </section>
+
+        <section id="quiet-hours" class="settings-section" data-settings-page="rules" hidden>
+          <div class="section-heading">
+            <div>
+              <h2>免打扰</h2>
+              <p>在指定时段暂停普通提醒。</p>
+            </div>
+            <label class="compact-toggle"><input type="checkbox" data-path="quietHours.enabled" /> 启用</label>
+          </div>
+          <div class="field-grid two-columns">
+            <label class="field"><span>开始时间</span><input type="time" data-path="quietHours.start" /></label>
+            <label class="field"><span>结束时间</span><input type="time" data-path="quietHours.end" /></label>
+          </div>
+          <label class="setting-row standalone-row">
+            <span><strong>紧急事件仍然提醒</strong><small>任务失败或等待用户输入时不受免打扰限制。</small></span>
+            <input type="checkbox" data-path="quietHours.allowUrgent" />
+          </label>
+        </section>
+
+        <section id="appearance" class="settings-section" data-settings-page="appearance" hidden>
+          <div class="section-heading">
+            <div>
+              <h2>桌面外观</h2>
+              <p>控制桌面宠物和任务面板的显示行为。</p>
+            </div>
+          </div>
+          <section class="pet-library-card" aria-labelledby="pet-library-title">
+            <div class="pet-library-heading">
+              <div>
+                <h3 id="pet-library-title">宠物库</h3>
+                <p>导入的宠物会复制到应用自己的目录，原压缩包移动或删除后仍可使用。</p>
+              </div>
+              <button id="open-pet-library" class="secondary-button compact-button" type="button">打开目录</button>
+            </div>
+            <label class="field pet-library-select-field">
+              <span>当前宠物</span>
+              <select id="pet-library-select" aria-describedby="pet-library-status">
+                <option value="builtin-default">内置默认宠物</option>
+              </select>
+            </label>
+            <div id="pet-zip-drop" class="pet-zip-drop" tabindex="0" role="button" aria-label="拖入或选择宠物 ZIP 压缩包">
+              <strong>把宠物 GIF 压缩包拖到这里</strong>
+              <small>需包含统一名称前缀的 11 个标准状态 GIF；最多 50 MB。</small>
+              <button id="import-pet-zip" class="secondary-button compact-button" type="button">选择 ZIP</button>
+            </div>
+            <div class="pet-library-footer">
+              <p id="pet-library-status" class="pet-library-status" role="status">正在读取宠物库…</p>
+              <button id="remove-pet" class="danger-button" type="button" disabled>删除当前宠物</button>
+            </div>
+          </section>
+          <div class="setting-list">
+            <label class="setting-row">
+              <span><strong>显示桌面宠物</strong><small>关闭后仍可通过托盘打开任务列表和设置。</small></span>
+              <input type="checkbox" data-path="appearance.showPet" />
+            </label>
+            <label class="setting-row">
+              <span><strong>宠物与任务面板始终置顶</strong><small>让任务状态保持在其他窗口上方。</small></span>
+              <input type="checkbox" data-path="appearance.alwaysOnTop" />
+            </label>
+            <label class="setting-row pet-size-row">
+              <span><strong>宠物大小</strong><small>调整宠物在桌面上的显示尺寸。</small></span>
+              <span class="range-control compact-range-control">
+                <input type="range" min="80" max="224" step="8" data-path="appearance.pet.width" />
+                <output data-output-for="appearance.pet.width">112</output><span>px</span>
+              </span>
+            </label>
+            <label class="setting-row select-row">
+              <span><strong>精灵渲染</strong><small>像素画使用清晰像素；插画素材可选择平滑。</small></span>
+              <select data-path="appearance.pet.renderMode">
+                <option value="pixelated">清晰像素</option>
+                <option value="smooth">平滑</option>
+              </select>
+            </label>
+            <label class="setting-row select-row">
+              <span><strong>动态效果</strong><small>可跟随系统的“减少动态效果”设置。</small></span>
+              <select data-path="appearance.pet.reducedMotion">
+                <option value="system">跟随系统</option>
+                <option value="full">完整动画</option>
+                <option value="reduce">减少动画</option>
+              </select>
+            </label>
+            <label class="setting-row">
+              <span><strong>允许甩动</strong><small>快速释放宠物后继续按当前速度滑动。</small></span>
+              <input type="checkbox" data-path="appearance.pet.flingEnabled" />
+            </label>
+            <label class="setting-row">
+              <span><strong>碰到屏幕边缘反弹</strong><small>仅在甩动过程中生效，宠物始终留在可见区域。</small></span>
+              <input type="checkbox" data-path="appearance.pet.bounceEnabled" />
+            </label>
+            <label class="setting-row select-row">
+              <span><strong>主题</strong><small>应用到任务列表和设置页面。</small></span>
+              <select data-path="appearance.theme">
+                <option value="system">跟随系统</option>
+                <option value="light">浅色</option>
+                <option value="dark">深色</option>
+              </select>
+            </label>
+            <label class="setting-row" id="open-at-login-row">
+              <span><strong>Windows 登录后自动启动</strong><small id="open-at-login-help">安装正式版本后可用。</small></span>
+              <input type="checkbox" data-path="startup.openAtLogin" />
+            </label>
+          </div>
+        </section>
+
+        <section id="community" class="settings-section community-section" data-settings-page="community" hidden>
+          <div class="section-heading">
+            <div>
+              <h2>参与共建</h2>
+            </div>
+          </div>
+
+          <div class="community-join-card">
+            <div class="community-copy">
+              <span class="community-kicker">AGENT PET COMMUNITY</span>
+              <h3>加入爱好者交流群</h3>
+              <p>交流宠物素材、通知体验和新功能想法；欢迎提交建议，也欢迎直接参与开发。</p>
+
+              <div class="community-group-number" aria-label="Agent Pet QQ 群号 650561994">
+                <span>QQ群</span>
+                <strong>650561994</strong>
+                <button id="copy-community-group" class="secondary-button compact-button" type="button">
+                  复制群号
+                </button>
+              </div>
+              <p id="community-copy-status" class="community-copy-status" role="status">
+                二维码无法识别时，可在 QQ 中搜索群号加入。
+              </p>
+            </div>
+
+            <figure class="community-qr">
+              <div class="community-qr-frame">
+                <img
+                  src="/assets/community/qq-group-650561994.png"
+                  alt="Agent Pet 爱好者 QQ 群二维码，群号 650561994"
+                  draggable="false"
+                />
+              </div>
+              <figcaption>使用手机 QQ 扫码加入</figcaption>
+            </figure>
+          </div>
+
+        </section>
+
+        <footer class="settings-footer" data-settings-page="general">
+          <div>
+            <strong>恢复默认设置</strong>
+            <p>不会删除任务记录或 Codex 会话文件。</p>
+          </div>
+          <button id="reset-settings" class="danger-button" type="button">恢复默认</button>
+        </footer>
+      </main>
+    </div>
+
+    <dialog id="weixin-connect-dialog" class="weixin-connect-dialog">
+      <div class="weixin-dialog-shell">
+        <div class="weixin-dialog-header">
+          <div>
+            <h2>连接微信</h2>
+            <p>通过腾讯官方个人微信接口接收 Agent Pet 通知。</p>
+          </div>
+          <button id="close-weixin-dialog" class="dialog-close" type="button" aria-label="关闭">×</button>
+        </div>
+
+        <div class="weixin-dialog-content">
+          <div id="weixin-qr-stage" class="weixin-connect-stage">
+            <div class="weixin-qr-frame">
+              <img id="weixin-qr-code" alt="微信连接二维码" hidden />
+              <span id="weixin-qr-loading" class="weixin-qr-loading" aria-hidden="true"></span>
+            </div>
+            <strong id="weixin-qr-title">正在准备二维码…</strong>
+            <p id="weixin-qr-help">二维码生成后，请使用手机微信扫码。</p>
+          </div>
+
+          <form id="weixin-verification-form" class="weixin-connect-stage" hidden>
+            <div class="verification-icon" aria-hidden="true">?</div>
+            <strong>微信需要额外验证</strong>
+            <p>这不是必经步骤。仅当微信要求时，请输入手机微信中显示的数字验证码。</p>
+            <label class="field verification-field">
+              <span>验证码</span>
+              <input id="weixin-verification-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" pattern="[0-9]+" placeholder="输入数字验证码" required />
+            </label>
+            <button id="submit-weixin-verification" class="primary-button" type="submit">继续连接</button>
+          </form>
+
+          <div id="weixin-bind-stage" class="weixin-connect-stage" hidden>
+            <div class="binding-icon binding-icon-pending" aria-hidden="true">…</div>
+            <strong>等待微信消息</strong>
+            <p>请在微信中向 Agent Pet 发送任意一条消息。</p>
+            <small>收到消息并取得会话上下文后，才会确认连接成功。</small>
+          </div>
+
+          <div id="weixin-reconnecting-stage" class="weixin-connect-stage" hidden>
+            <div class="binding-icon binding-icon-pending" aria-hidden="true">…</div>
+            <strong>正在恢复微信连接</strong>
+            <p>Agent Pet 正在重新建立腾讯长轮询通道。</p>
+            <small>恢复成功前不会显示“已连接”，待发送通知会自动重试。</small>
+          </div>
+
+          <div id="weixin-connected-stage" class="weixin-connect-stage" hidden>
+            <div class="binding-icon" aria-hidden="true">✓</div>
+            <strong>微信已连接</strong>
+            <p id="weixin-connected-account">现在可以接收 Agent Pet 的远程通知。</p>
+          </div>
+
+          <div id="weixin-error-stage" class="weixin-connect-stage" hidden>
+            <div class="connection-error-icon" aria-hidden="true">!</div>
+            <strong>连接没有完成</strong>
+            <p id="weixin-dialog-error">请关闭窗口后重新连接。</p>
+            <button id="retry-weixin-connection" class="secondary-button" type="button">重新连接</button>
+          </div>
+        </div>
+
+        <div class="weixin-dialog-footer">
+          <p id="weixin-dialog-status" role="status">连接过程在本机完成。</p>
+          <button id="dismiss-weixin-dialog" class="secondary-button" type="button">关闭</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="voice-editor" class="voice-editor">
+      <form id="voice-editor-form" class="voice-editor-form">
+        <div class="voice-editor-header">
+          <div>
+            <h2 id="voice-editor-title">添加音色</h2>
+            <p>文件将复制到应用管理的音色库中。</p>
+          </div>
+          <button id="close-voice-editor" class="dialog-close" type="button" aria-label="关闭">×</button>
+        </div>
+        <div class="voice-editor-fields">
+          <label class="field full-width">
+            <span>音色名称</span>
+            <input id="voice-name" type="text" maxlength="60" placeholder="例如：自定义女声 01" required />
+          </label>
+          <div class="field full-width" data-voice-add-only>
+            <span>GPT 模型</span>
+            <div class="file-picker-row">
+              <input id="voice-gpt-file" type="text" readonly placeholder="选择一个 .ckpt 文件" />
+              <button class="inline-button" type="button" data-pick-voice-file="gpt">选择</button>
+            </div>
+          </div>
+          <div class="field full-width" data-voice-add-only>
+            <span>SoVITS 模型</span>
+            <div class="file-picker-row">
+              <input id="voice-sovits-file" type="text" readonly placeholder="选择一个 .pth 文件" />
+              <button class="inline-button" type="button" data-pick-voice-file="sovits">选择</button>
+            </div>
+          </div>
+          <div class="field full-width" data-voice-add-only>
+            <span>参考音频</span>
+            <div class="file-picker-row">
+              <input id="voice-reference-file" type="text" readonly placeholder="选择参考音频" />
+              <button class="inline-button" type="button" data-pick-voice-file="reference">选择</button>
+            </div>
+          </div>
+          <label class="field full-width">
+            <span>参考音频文本</span>
+            <input id="voice-prompt-text" type="text" maxlength="500" placeholder="建议与参考音频内容一致" />
+          </label>
+          <label class="field full-width">
+            <span>参考语言</span>
+            <select id="voice-prompt-language">
+              <option value="zh">中文</option><option value="ja">日语</option><option value="en">英语</option>
+              <option value="ko">韩语</option><option value="yue">粤语</option><option value="auto">自动</option>
+            </select>
+          </label>
+          <div class="engine-note" data-voice-add-only>
+            <span class="intro-icon" aria-hidden="true">i</span>
+            <p>只导入可信来源的模型。复制完成后原文件可自由移动；导入期间请勿关闭应用。</p>
+          </div>
+          <small id="voice-editor-help" class="engine-help"></small>
+        </div>
+        <div class="voice-editor-actions">
+          <button id="cancel-voice-editor" class="secondary-button" type="button">取消</button>
+          <button id="save-voice-editor" class="primary-button" type="submit">保存音色</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

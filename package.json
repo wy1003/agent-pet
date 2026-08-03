@@ -1,0 +1,110 @@
+{
+  "name": "agent-pet",
+  "productName": "Agent Pet",
+  "version": "0.1.0",
+  "private": true,
+  "main": "desktop/main.mjs",
+  "type": "module",
+  "description": "Open-source desktop pet and task notification companion for AI coding agents; currently integrates with Codex.",
+  "author": "wy1003",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wy1003/agent-pet.git"
+  },
+  "homepage": "https://github.com/wy1003/agent-pet#readme",
+  "scripts": {
+    "start": "node src/cli.mjs",
+    "companion": "electron desktop/main.mjs",
+    "test": "node --test",
+    "generate:icon": "node scripts/generate-build-icon.mjs",
+    "pack": "npm run generate:icon && electron-builder --dir",
+    "dist:win": "npm run generate:icon && electron-builder --win nsis portable --x64",
+    "release": "npm run generate:icon && electron-builder --win nsis portable --x64 --publish always"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.0.12",
+    "pngjs": "^7.0.0"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "^0.146.0",
+    "electron-updater": "^6.6.2",
+    "fflate": "^0.8.2",
+    "qrcode": "1.5.4"
+  },
+  "build": {
+    "appId": "io.github.wy1003.agentpet",
+    "productName": "Agent Pet",
+    "asar": true,
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "desktop/**/*",
+      "public/**/*",
+      "src/**/*",
+      "package.json",
+      "LICENSE"
+    ],
+    "extraResources": [
+      {
+        "from": "scripts",
+        "to": "scripts"
+      },
+      {
+        "from": "setup-gpt-sovits.cmd",
+        "to": "setup-gpt-sovits.cmd"
+      },
+      {
+        "from": "start-gpt-sovits.cmd",
+        "to": "start-gpt-sovits.cmd"
+      },
+      {
+        "from": "remove-gpt-sovits.cmd",
+        "to": "remove-gpt-sovits.cmd"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Agent Pet",
+      "artifactName": "Agent-Pet-Setup-${version}-${arch}.${ext}",
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "Agent-Pet-Portable-${version}-${arch}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "wy1003",
+        "repo": "agent-pet",
+        "releaseType": "release"
+      }
+    ]
+  }
+}
