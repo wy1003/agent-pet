@@ -52,6 +52,24 @@ test("GIF pet archive validates the standard state files", () => {
   assert.deepEqual(inspectGif(files["sample-idle.gif"]), { width: 192, height: 208, frames: 6 });
 });
 
+test("GIF pet archive accepts a partial set of supported states", async () => {
+  const files = {
+    "partial-idle.gif": gif(GIF_PET_STATES.idle),
+    "partial-failed.gif": gif(GIF_PET_STATES.failed),
+  };
+  const pet = validateGifPetFiles(files);
+  assert.equal(pet.id, "partial");
+  assert.deepEqual(Object.keys(pet.states), ["idle", "failed"]);
+
+  const directory = await mkdtemp(path.join(os.tmpdir(), "partial-pet-library-"));
+  const zipPath = path.join(directory, "partial.zip");
+  await import("node:fs/promises").then(({ writeFile }) => writeFile(zipPath, Buffer.from(zipSync(files))));
+  const library = new PetLibrary(path.join(directory, "pets"));
+  const imported = await library.importZip(zipPath);
+  assert.deepEqual(Object.keys(imported.states), ["idle", "failed"]);
+  assert.deepEqual(Object.keys((await library.get("partial")).states), ["idle", "failed"]);
+});
+
 test("GIF pet archive rejects mixed prefixes and incorrect frame counts", () => {
   const files = Object.fromEntries(Object.entries(GIF_PET_STATES)
     .map(([state, frames]) => [`sample-${state}.gif`, gif(frames)]));

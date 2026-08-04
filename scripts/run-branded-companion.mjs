@@ -58,7 +58,7 @@ if (process.argv.includes("--prepare-only")) {
 
 const child = spawn(executable, [entryPoint], {
   cwd: root,
-  env: process.env,
+  env: { ...process.env, AGENT_PET_DEVELOPMENT: "1" },
   stdio: "inherit",
   windowsHide: false,
 });

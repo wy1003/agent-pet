@@ -15,7 +15,7 @@ import {
   Tray,
 } from "electron";
 import electronUpdater from "electron-updater";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -44,7 +44,10 @@ import { TaskEventClient } from "./task-event-client.mjs";
 import { VoiceLibrary } from "./voice-library.mjs";
 import { VoicePlaybackQueue } from "./voice-playback-queue.mjs";
 import { GptSovitsServiceController } from "./gpt-sovits-service.mjs";
-import { PetStateController } from "./pet/pet-state-controller.mjs";
+import {
+  PetStateController,
+  resolveAvailablePetState,
+} from "./pet/pet-state-controller.mjs";
 import { PetLibrary } from "./pet/pet-library.mjs";
 import { PET_ANIMATION_PROFILE } from "./pet/pet-animation-profile.mjs";
 import { PET_DRAG_PROFILE } from "./pet/pet-drag-profile.mjs";
@@ -85,10 +88,21 @@ import {
 } from "./storage-locations.mjs";
 import { agentPetIconPngBuffer } from "./app-icon.mjs";
 import { AppUpdater } from "./app-updater.mjs";
+import { resolveAppRuntime } from "./app-runtime.mjs";
 
 const { autoUpdater } = electronUpdater;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const PACKAGE_VERSION = JSON.parse(
+  readFileSync(path.resolve(HERE, "..", "package.json"), "utf8"),
+).version;
+const APP_RUNTIME = resolveAppRuntime({
+  appIsPackaged: app.isPackaged,
+  appVersion: app.getVersion(),
+  packageVersion: PACKAGE_VERSION,
+  defaultApp: process.defaultApp,
+  explicitDevelopment: process.env.AGENT_PET_DEVELOPMENT === "1",
+});
 const PRELOAD_PATH = path.join(HERE, "preload.cjs");
 const BUILD_ICON_PATH = path.resolve(HERE, "..", "build", "icon.png");
 const DEFAULT_SERVICE_URL = "http://127.0.0.1:43123";
@@ -222,7 +236,7 @@ function settingsState() {
   return {
     preferences: preferenceStore.get(),
     capabilities: {
-      openAtLogin: app.isPackaged,
+      openAtLogin: APP_RUNTIME.packaged,
       voiceDelivery: speechCapabilities.supported,
       mobileDelivery: true,
     },
@@ -304,7 +318,7 @@ function applyPreferences(preferences) {
   if (panelWindow && !panelWindow.isDestroyed()) {
     panelWindow.setAlwaysOnTop(preferences.appearance.alwaysOnTop, "floating");
   }
-  if (app.isPackaged) {
+  if (APP_RUNTIME.packaged) {
     app.setLoginItemSettings({ openAtLogin: preferences.startup.openAtLogin });
   }
   rebuildTrayMenu();
@@ -373,6 +387,10 @@ function installDisplayHandlers() {
 
 function petStatePayload(state = petStateController?.snapshot()) {
   const preferences = preferenceStore?.get()?.appearance?.pet || {};
+  const availableStates = selectedPet?.format === "state-gifs"
+    ? Object.keys(selectedPet.states)
+    : null;
+  const requestedState = state || { state: "idle", generation: 0, oneShot: false, count: 0 };
   const stateUrls = selectedPet?.format === "state-gifs"
     ? Object.fromEntries(Object.entries(selectedPet.states).map(([name, fileName]) => [
       name,
@@ -380,7 +398,8 @@ function petStatePayload(state = petStateController?.snapshot()) {
     ]))
     : {};
   return {
-    ...(state || { state: "idle", generation: 0, oneShot: false, count: 0 }),
+    ...requestedState,
+    state: resolveAvailablePetState(requestedState.state, availableStates),
     animationProfile: PET_ANIMATION_PROFILE,
     pet: {
       id: selectedPet?.id || "builtin-default",
@@ -419,7 +438,12 @@ async function petLibraryState() {
 function sendPetState(state = petStateController?.snapshot(), overrideState = "") {
   if (!badgeWindow || badgeWindow.isDestroyed() || badgeWindow.webContents.isLoading()) return;
   const payload = petStatePayload(state);
-  if (overrideState) payload.state = overrideState;
+  if (overrideState) {
+    const availableStates = selectedPet?.format === "state-gifs"
+      ? Object.keys(selectedPet.states)
+      : null;
+    payload.state = resolveAvailablePetState(overrideState, availableStates);
+  }
   badgeWindow.webContents.send("pet:state", payload);
 }
 
@@ -996,7 +1020,10 @@ function createNotificationServices() {
     showWindowsNotification: showTaskWindowsNotification,
     recordHistory: (record) => notificationHistory.append(record),
   });
-  petStateController = new PetStateController({ onState: (state) => sendPetState(state) });
+  petStateController = new PetStateController({
+    availableStates: selectedPet?.format === "state-gifs" ? Object.keys(selectedPet.states) : null,
+    onState: (state) => sendPetState(state),
+  });
   sendPetState(petStateController.snapshot());
   taskEventClient = new TaskEventClient(serviceUrl, {
     onEvent: (event, value) => {
@@ -1019,7 +1046,7 @@ async function voiceLibraryState() {
 }
 
 function helperScriptPath(fileName) {
-  const root = app.isPackaged ? process.resourcesPath : path.resolve(HERE, "..");
+  const root = APP_RUNTIME.packaged ? process.resourcesPath : path.resolve(HERE, "..");
   return path.join(root, fileName);
 }
 
@@ -1230,7 +1257,7 @@ function rebuildTrayMenu() {
         label: "开机启动",
         type: "checkbox",
         checked: preferences.startup.openAtLogin,
-        enabled: app.isPackaged,
+        enabled: APP_RUNTIME.packaged,
         click: (item) => {
           preferenceStore
             .update({ startup: { openAtLogin: item.checked } })
@@ -1428,11 +1455,11 @@ function installIpcHandlers() {
     requireSettingsMainFrame(event);
     return appUpdater?.status() || {
       state: "unavailable",
-      currentVersion: app.getVersion(),
+      currentVersion: APP_RUNTIME.version,
       nextVersion: "",
       progress: 0,
       message: "更新服务尚未就绪",
-      packaged: app.isPackaged,
+      packaged: APP_RUNTIME.packaged,
     };
   });
   ipcMain.handle("app:check-update", async (event) => {
@@ -1647,6 +1674,7 @@ function installIpcHandlers() {
     requireTrustedSender(event);
     const pet = await petLibrary.importZip(zipPath);
     selectedPet = pet;
+    petStateController?.setAvailableStates(Object.keys(pet.states));
     const preferences = await preferenceStore.update({
       appearance: { pet: { selectedPetId: pet.id } },
     });
@@ -1658,6 +1686,9 @@ function installIpcHandlers() {
     requireTrustedSender(event);
     const id = String(value || "");
     selectedPet = id === "builtin-default" ? null : await petLibrary.get(id);
+    petStateController?.setAvailableStates(
+      selectedPet?.format === "state-gifs" ? Object.keys(selectedPet.states) : null,
+    );
     const preferences = await preferenceStore.update({
       appearance: { pet: { selectedPetId: selectedPet?.id || "builtin-default" } },
     });
@@ -1672,6 +1703,7 @@ function installIpcHandlers() {
     await petLibrary.remove(id);
     if (selectedPet?.id === id) {
       selectedPet = null;
+      petStateController?.setAvailableStates(null);
       const preferences = await preferenceStore.update({
         appearance: { pet: { selectedPetId: "builtin-default" } },
       });
@@ -1840,8 +1872,8 @@ if (!hasSingleInstanceLock) {
       });
       appUpdater = new AppUpdater({
         autoUpdater,
-        currentVersion: app.getVersion(),
-        isPackaged: app.isPackaged,
+        currentVersion: APP_RUNTIME.version,
+        isPackaged: APP_RUNTIME.packaged,
         onStatus: (status) => {
           if (settingsWindow && !settingsWindow.isDestroyed()) {
             settingsWindow.webContents.send("app:update-status-changed", status);

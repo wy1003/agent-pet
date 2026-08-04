@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { aggregatePetState, PetStateController } from "../desktop/pet/pet-state-controller.mjs";
+import {
+  aggregatePetState,
+  PetStateController,
+  resolveAvailablePetState,
+} from "../desktop/pet/pet-state-controller.mjs";
 
 test("pet state aggregation follows task priority", () => {
   assert.equal(aggregatePetState([]), "idle");
@@ -36,4 +40,28 @@ test("pet controller seeds silently and emits terminal feedback once", () => {
   controller.handleEvent("task.updated", { taskId: "task-1", status: "completed" });
   assert.equal(states.at(-1).state, "idle");
   assert.equal(states.at(-1).generation, generation);
+});
+
+test("pet controller only publishes states provided by a partial pet", () => {
+  assert.equal(resolveAvailablePetState("running", ["idle", "failed"]), "idle");
+  assert.equal(resolveAvailablePetState("running", ["waving", "failed"]), "waving");
+
+  const states = [];
+  const controller = new PetStateController({
+    availableStates: ["idle", "failed"],
+    onState: (state) => states.push(state),
+  });
+  controller.handleEvent("snapshot", {
+    tasks: [{ taskId: "task-1", status: "running", phase: "reasoning" }],
+  });
+  assert.equal(states.at(-1).state, "idle");
+
+  controller.handleEvent("task.updated", { taskId: "task-1", status: "completed" });
+  assert.equal(states.at(-1).state, "idle");
+  assert.equal(states.at(-1).oneShot, false);
+
+  controller.handleEvent("task.updated", { taskId: "task-1", status: "running" });
+  controller.handleEvent("task.updated", { taskId: "task-1", status: "failed" });
+  assert.equal(states.at(-1).state, "failed");
+  assert.equal(states.at(-1).oneShot, true);
 });

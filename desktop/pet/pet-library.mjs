@@ -31,7 +31,8 @@ export const GIF_PET_STATES = Object.freeze({
   "look-left-side": 8,
 });
 
-const STATE_SUFFIXES = Object.keys(GIF_PET_STATES).sort((left, right) => right.length - left.length);
+const PET_STATE_NAMES = Object.keys(GIF_PET_STATES);
+const STATE_SUFFIXES = [...PET_STATE_NAMES].sort((left, right) => right.length - left.length);
 
 function petError(code, message) {
   const error = new Error(message);
@@ -177,8 +178,12 @@ function normalizedArchiveFiles(unzipped) {
 
 export function validateGifPetFiles(unzipped) {
   const files = normalizedArchiveFiles(unzipped);
-  if (files.length !== STATE_SUFFIXES.length || files.some(({ name }) => name.includes("/"))) {
-    throw petError("invalid_pet_archive", `ZIP 根目录必须恰好包含 ${STATE_SUFFIXES.length} 个标准 GIF`);
+  if (files.length === 0 || files.length > PET_STATE_NAMES.length
+    || files.some(({ name }) => name.includes("/"))) {
+    throw petError(
+      "invalid_pet_archive",
+      `ZIP 根目录应包含 1 至 ${PET_STATE_NAMES.length} 个受支持的状态 GIF`,
+    );
   }
   const states = {};
   let petId = "";
@@ -198,9 +203,6 @@ export function validateGifPetFiles(unzipped) {
       );
     }
     states[state] = name;
-  }
-  for (const state of STATE_SUFFIXES) {
-    if (!states[state]) throw petError("missing_pet_state", `缺少宠物状态：${state}`);
   }
   return { id: petId, displayName: petId, states, files };
 }
@@ -236,13 +238,17 @@ export class PetLibrary {
       throw petError("invalid_managed_pet", "受管宠物清单无效");
     }
     const states = {};
-    for (const state of STATE_SUFFIXES) {
+    for (const state of PET_STATE_NAMES) {
       const fileName = String(manifest.states?.[state] || "");
+      if (!fileName) continue;
       if (path.basename(fileName) !== fileName || !fileName.toLowerCase().endsWith(".gif")) {
-        throw petError("invalid_managed_pet", `受管宠物缺少状态：${state}`);
+        throw petError("invalid_managed_pet", `受管宠物状态文件无效：${state}`);
       }
       await access(path.join(petRoot, fileName));
       states[state] = fileName;
+    }
+    if (Object.keys(states).length === 0) {
+      throw petError("invalid_managed_pet", "受管宠物至少需要一个可用状态");
     }
     return { ...manifest, states, rootPath: petRoot };
   }

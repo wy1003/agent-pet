@@ -8,6 +8,19 @@ function valuesOf(tasks) {
   return tasks instanceof Map ? [...tasks.values()] : [...(tasks || [])];
 }
 
+function normalizedAvailableStates(states) {
+  if (states == null) return null;
+  return [...new Set([...states].map((state) => String(state || "").trim()).filter(Boolean))];
+}
+
+export function resolveAvailablePetState(state, availableStates = null) {
+  const requested = String(state || "idle");
+  const available = normalizedAvailableStates(availableStates);
+  if (available === null || available.includes(requested)) return requested;
+  if (available.includes("idle")) return "idle";
+  return available[0] || "idle";
+}
+
 export function aggregatePetState(tasks) {
   const values = valuesOf(tasks);
   if (values.some((task) => task?.status === "needs_input" && task?.phase === "waiting_approval")) {
@@ -30,6 +43,7 @@ function transitionPriority(status) {
 export class PetStateController {
   constructor(options = {}) {
     this.onState = options.onState || (() => {});
+    this.availableStates = normalizedAvailableStates(options.availableStates);
     this.tasks = new Map();
     this.statusByTask = new Map();
     this.feedbackKeys = new Set();
@@ -40,6 +54,16 @@ export class PetStateController {
 
   snapshot() {
     return { ...this.current };
+  }
+
+  setAvailableStates(states = null) {
+    const next = normalizedAvailableStates(states);
+    const previousKey = this.availableStates === null ? "*" : this.availableStates.join("\0");
+    const nextKey = next === null ? "*" : next.join("\0");
+    if (previousKey === nextKey) return false;
+    this.availableStates = next;
+    this.#publishBaseState();
+    return true;
   }
 
   handleEvent(event, value) {
@@ -137,13 +161,17 @@ export class PetStateController {
   }
 
   #publishFeedback(state) {
+    if (this.availableStates !== null && !this.availableStates.includes(state)) {
+      this.#publishBaseState();
+      return;
+    }
     this.generation += 1;
     this.#publish({ state, generation: this.generation, oneShot: true, count: this.tasks.size });
   }
 
   #publishBaseState() {
     this.#publish({
-      state: aggregatePetState(this.tasks),
+      state: resolveAvailablePetState(aggregatePetState(this.tasks), this.availableStates),
       generation: this.generation,
       oneShot: false,
       count: this.tasks.size,
