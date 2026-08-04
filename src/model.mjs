@@ -259,6 +259,13 @@ function lifecycleStart(session, payload, timestamp) {
 }
 
 function lifecycleComplete(session, payload, timestamp) {
+  // Codex may emit `task_complete` for a turn that stopped with a transport or
+  // compaction error. The event name describes the lifecycle ending, not a
+  // successful result, so the embedded error must take precedence.
+  if (payload.error) {
+    lifecycleFailure(session, payload, timestamp);
+    return;
+  }
   const turn = ensureTurn(session, payload.turn_id, timestamp);
   const completedAt = timestampFromValue(payload.completed_at, timestamp);
   const finalText = normalizeMessageText(payload.last_agent_message);
@@ -314,14 +321,39 @@ function lifecycleAbort(session, payload, timestamp) {
 function lifecycleFailure(session, payload, timestamp) {
   const turn = ensureTurn(session, payload.turn_id, timestamp);
   const completedAt = timestampFromValue(payload.completed_at, timestamp);
+  const errorMessage = String(payload.message || payload.error?.message || payload.reason || "执行失败");
   turn.executionStatus = "failed";
   turn.phase = "finished";
   turn.completedAt = completedAt;
   turn.lastActivityAt = completedAt;
-  turn.error = String(payload.message || payload.error?.message || payload.reason || "执行失败");
+  turn.error = errorMessage;
+
+  // Remote compaction runs as a lifecycle-only turn immediately after Codex
+  // aborts the visible user turn. If compaction fails, attribute that failure
+  // to the interrupted user task instead of exposing a second unnamed task.
+  let visibleTurn = turn;
+  const previous = session.turns.get(session.lastTurnId);
+  const previousCompletedAt = Date.parse(previous?.completedAt || "");
+  const internalStartedAt = Date.parse(turn.startedAt || "");
+  const followsInterruptedTurn = previous
+    && previous !== turn
+    && previous.executionStatus === "interrupted"
+    && Boolean(previous.userText)
+    && Number.isFinite(previousCompletedAt)
+    && Number.isFinite(internalStartedAt)
+    && internalStartedAt - previousCompletedAt >= 0
+    && internalStartedAt - previousCompletedAt <= 30_000;
+  if (!turn.userText && followsInterruptedTurn && /remote compact task/i.test(errorMessage)) {
+    previous.executionStatus = "failed";
+    previous.phase = "finished";
+    previous.completedAt = completedAt;
+    previous.lastActivityAt = completedAt;
+    previous.error = errorMessage;
+    visibleTurn = previous;
+  }
   session.activeTurnId = null;
   session.userMessageContext = null;
-  session.lastTurnId = turn.turnId;
+  session.lastTurnId = visibleTurn.turnId;
   session.status = {
     ...session.status,
     petStatus: "blocked",

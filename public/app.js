@@ -34,6 +34,13 @@ let emptyPanelCloseTimer = null;
 let visiblePanelItemCount = 0;
 const expandedSessionIds = new Set();
 
+function acknowledgeSymbol(status) {
+  if (status === "failed") return "×";
+  if (status === "interrupted") return "!";
+  if (status === "unknown") return "?";
+  return "✓";
+}
+
 function cancelEmptyPanelClose() {
   clearTimeout(emptyPanelCloseTimer);
   emptyPanelCloseTimer = null;
@@ -134,8 +141,9 @@ function createTaskCard(task) {
   state.append(phase);
 
   if (task.canAcknowledge) {
-    const button = element("button", "acknowledge-button", "✓");
+    const button = element("button", "acknowledge-button", acknowledgeSymbol(task.status));
     button.type = "button";
+    button.dataset.status = task.status;
     button.title = "确认并从列表移除";
     button.setAttribute("aria-label", `确认任务：${task.question || task.title || "未命名任务"}`);
     button.addEventListener("click", () => acknowledgeTask(task, button));
@@ -181,7 +189,7 @@ function createCompactTaskCard(task) {
   card.append(content);
 
   if (task.canAcknowledge) {
-    const symbol = task.status === "failed" ? "×" : "✓";
+    const symbol = acknowledgeSymbol(task.status);
     const button = element("button", "compact-acknowledge", symbol);
     button.type = "button";
     button.dataset.status = task.status;
@@ -362,7 +370,7 @@ async function acknowledgeTask(task, button) {
     render();
   } catch (error) {
     button.disabled = false;
-    button.textContent = task.status === "failed" ? "×" : "✓";
+    button.textContent = acknowledgeSymbol(task.status);
     showToast(error.message || "暂时无法确认任务，请稍后重试");
   }
 }

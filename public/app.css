@@ -340,6 +340,17 @@ h1 {
   transition: transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
 }
 
+.acknowledge-button[data-status="failed"] {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.acknowledge-button[data-status="interrupted"],
+.acknowledge-button[data-status="unknown"] {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
 .acknowledge-button:hover {
   box-shadow: 0 9px 20px rgba(35, 92, 75, 0.28);
   transform: translateY(-1px);
@@ -882,6 +893,12 @@ body.companion-mode {
 .companion-mode .compact-acknowledge[data-status="failed"] {
   color: var(--danger);
   background: var(--danger-soft);
+}
+
+.companion-mode .compact-acknowledge[data-status="interrupted"],
+.companion-mode .compact-acknowledge[data-status="unknown"] {
+  color: var(--warning);
+  background: var(--warning-soft);
 }
 
 .companion-mode .compact-acknowledge:hover {

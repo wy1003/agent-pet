@@ -97,6 +97,85 @@ test("legacy and repository folder names use the Agent Pet display brand", () =>
   assert.equal(repository.projectName, "Agent Pet");
 });
 
+test("task_complete with an embedded error is classified as failed", () => {
+  const session = createSession(meta, "session.jsonl", meta.timestamp);
+  applyRecord(session, event("event_msg", { type: "task_started", turn_id: "turn-error" }));
+  applyRecord(session, event("event_msg", { type: "user_message", message: "test failure" }));
+  applyRecord(
+    session,
+    event("event_msg", {
+      type: "task_complete",
+      turn_id: "turn-error",
+      last_agent_message: null,
+      error: {
+        message: "stream disconnected before completion",
+        codex_error_info: "other",
+      },
+    }),
+  );
+
+  const snapshot = sessionSnapshot(session);
+  assert.equal(snapshot.status.petStatus, "blocked");
+  assert.equal(snapshot.status.executionStatus, "failed");
+  assert.equal(snapshot.lastTurn.error, "stream disconnected before completion");
+  assert.equal(sessionTaskSnapshots(session)[0].status, "failed");
+});
+
+test("remote compaction failure is attributed to the interrupted user task", () => {
+  const session = createSession(meta, "session.jsonl", meta.timestamp);
+  applyRecord(
+    session,
+    event(
+      "event_msg",
+      { type: "task_started", turn_id: "user-turn" },
+      "2026-08-04T10:00:00.000Z",
+    ),
+  );
+  applyRecord(
+    session,
+    event(
+      "event_msg",
+      { type: "user_message", message: "did the upload finish" },
+      "2026-08-04T10:00:01.000Z",
+    ),
+  );
+  applyRecord(
+    session,
+    event(
+      "event_msg",
+      { type: "turn_aborted", turn_id: "user-turn", reason: "interrupted" },
+      "2026-08-04T10:00:10.000Z",
+    ),
+  );
+  applyRecord(
+    session,
+    event(
+      "event_msg",
+      { type: "task_started", turn_id: "compact-turn" },
+      "2026-08-04T10:00:10.010Z",
+    ),
+  );
+  applyRecord(
+    session,
+    event(
+      "event_msg",
+      {
+        type: "task_complete",
+        turn_id: "compact-turn",
+        error: { message: "Error running remote compact task: stream disconnected before completion" },
+      },
+      "2026-08-04T10:01:40.000Z",
+    ),
+  );
+
+  const tasks = sessionTaskSnapshots(session);
+  assert.equal(tasks.find((task) => task.turnId === "user-turn").status, "failed");
+  assert.match(tasks.find((task) => task.turnId === "user-turn").error, /remote compact task/);
+  assert.equal(tasks.find((task) => task.turnId === "compact-turn").status, "failed");
+  assert.equal(sessionSnapshot(session).lastTurn.turnId, "user-turn");
+  assert.equal(sessionSnapshot(session).status.executionStatus, "failed");
+});
+
 test("session index title overrides a derived title", () => {
   const session = createSession(meta, "session.jsonl", meta.timestamp);
   applyRecord(session, event("event_msg", { type: "user_message", message: "原始问题" }));
