@@ -17,3 +17,6 @@ coverage/
 .DS_Store
 Thumbs.db
 
+# Local development planning and handoff notes
+TASKS.md
+HANDOFF.md

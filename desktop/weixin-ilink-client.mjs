@@ -124,7 +124,6 @@ export class WeixinIlinkClient {
       timedOut = true;
       controller.abort();
     }, timeoutMs);
-    timer.unref?.();
 
     try {
       const response = await this.fetchImpl(url, {
