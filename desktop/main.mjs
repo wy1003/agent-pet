@@ -72,6 +72,7 @@ import {
 } from "./window-layout.mjs";
 import {
   LEGACY_MANAGED_DATA_DIRECTORY,
+  PRODUCT_APP_ID,
   PRODUCT_NAME,
   migrateLegacyUserData,
   productUserDataPath,
@@ -89,6 +90,7 @@ const { autoUpdater } = electronUpdater;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PRELOAD_PATH = path.join(HERE, "preload.cjs");
+const BUILD_ICON_PATH = path.resolve(HERE, "..", "build", "icon.png");
 const DEFAULT_SERVICE_URL = "http://127.0.0.1:43123";
 const PANEL_WIDTH = 350;
 const PANEL_HEIGHT = 380;
@@ -107,6 +109,7 @@ const LEGACY_USER_DATA_PATHS = [
 
 mkdirSync(PRODUCT_USER_DATA_PATH, { recursive: true });
 app.setName(PRODUCT_NAME);
+if (process.platform === "win32") app.setAppUserModelId(PRODUCT_APP_ID);
 app.setPath("userData", PRODUCT_USER_DATA_PATH);
 
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
@@ -716,7 +719,7 @@ async function showDailyReport() {
     minHeight: 420,
     show: false,
     title: `今日工作日报 · ${PRODUCT_NAME}`,
-    icon: createAgentPetIcon(32),
+    icon: createAgentPetIcon(256),
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#1e221f" : "#f3f2ed",
     autoHideMenuBar: true,
     webPreferences: {
@@ -755,7 +758,7 @@ async function showSettings() {
     minHeight: 620,
     show: false,
     title: `设置 · ${PRODUCT_NAME}`,
-    icon: createAgentPetIcon(32),
+    icon: createAgentPetIcon(256),
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#1e221f" : "#f3f2ed",
     autoHideMenuBar: true,
     webPreferences: {
@@ -1182,7 +1185,10 @@ async function createSpeechWindow() {
 }
 
 function createAgentPetIcon(size = 32) {
-  const source = nativeImage.createFromBuffer(agentPetIconPngBuffer(), { scaleFactor: 1 });
+  const buildIcon = nativeImage.createFromPath(BUILD_ICON_PATH);
+  const source = buildIcon.isEmpty()
+    ? nativeImage.createFromBuffer(agentPetIconPngBuffer(), { scaleFactor: 1 })
+    : buildIcon;
   if (source.isEmpty()) throw new Error("Agent Pet icon could not be decoded");
   if (size === 32) return source;
   const resized = source.resize({ width: size, height: size, quality: "best" });
@@ -1486,8 +1492,12 @@ function installIpcHandlers() {
       state: "disconnected",
       connected: false,
       bound: false,
+      sendAvailable: false,
+      deliveryState: "unavailable",
       qrCodeUrl: "",
       lastError: "",
+      lastSendError: "",
+      contextUpdatedAt: "",
       accountLabel: "",
     };
   });

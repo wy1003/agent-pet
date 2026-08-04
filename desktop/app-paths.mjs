@@ -2,6 +2,7 @@ import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises
 import path from "node:path";
 
 export const PRODUCT_NAME = "Agent Pet";
+export const PRODUCT_APP_ID = "io.github.wy1003.agentpet";
 export const MANAGED_DATA_DIRECTORY = "AgentPet";
 export const LEGACY_MANAGED_DATA_DIRECTORY = "CodexTaskCompanion";
 export const DATA_LOCATION_FILE = "data-location.json";

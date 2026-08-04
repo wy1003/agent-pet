@@ -29,6 +29,15 @@ function isAbortError(error) {
   return error?.name === "AbortError";
 }
 
+function deliveryFailureMessage(error) {
+  const code = String(error?.code || "").trim();
+  const detail = String(error?.errmsg || error?.message || "微信通知发送失败").trim();
+  if (Number(error?.code) === -2) {
+    return `微信拒绝发送（-2：${detail}）。会话上下文可能已经失效，请先在微信中向 Agent Pet 发送一条消息刷新连接。`;
+  }
+  return code && detail !== code ? `${code}：${detail}` : (detail || code);
+}
+
 function normalizeCredentials(value) {
   if (!value || typeof value !== "object") return null;
   const botToken = String(value.botToken || "").trim();
@@ -41,6 +50,7 @@ function normalizeCredentials(value) {
     scannerUserId: String(value.scannerUserId || "").trim(),
     userId: String(value.userId || "").trim(),
     contextToken: String(value.contextToken || "").trim(),
+    contextUpdatedAt: String(value.contextUpdatedAt || "").trim(),
     getUpdatesBuf: String(value.getUpdatesBuf || ""),
   };
 }
@@ -67,6 +77,9 @@ export class WeixinRemoteService {
     this.state = "disconnected";
     this.qrCodeUrl = "";
     this.lastError = "";
+    this.lastSendError = "";
+    this.lastSendAt = "";
+    this.lastSendSuccessAt = "";
     this.started = false;
     this.loginController = null;
     this.loginPromise = null;
@@ -79,12 +92,26 @@ export class WeixinRemoteService {
 
   status() {
     const bound = Boolean(this.credentials?.userId && this.credentials?.contextToken);
+    const connected = this.state === "connected";
+    const deliveryState = !bound
+      ? "unavailable"
+      : this.lastSendError
+        ? "degraded"
+        : connected
+          ? "ready"
+          : "recovering";
     return {
       state: this.state,
-      connected: this.state === "connected",
+      connected,
       bound,
+      sendAvailable: deliveryState === "ready",
+      deliveryState,
       qrCodeUrl: this.qrCodeUrl,
       lastError: this.lastError,
+      lastSendError: this.lastSendError,
+      lastSendAt: this.lastSendAt,
+      lastSendSuccessAt: this.lastSendSuccessAt,
+      contextUpdatedAt: this.credentials?.contextUpdatedAt || "",
       accountLabel: this.credentials ? "已连接的微信" : "",
     };
   }
@@ -141,6 +168,9 @@ export class WeixinRemoteService {
     await this.#stopLogin();
     await this.#stopPolling();
     this.lastError = "";
+    this.lastSendError = "";
+    this.lastSendAt = "";
+    this.lastSendSuccessAt = "";
 
     const controller = new AbortController();
     this.loginController = controller;
@@ -302,6 +332,7 @@ export class WeixinRemoteService {
       scannerUserId: String(response.ilink_user_id || "").trim(),
       userId: "",
       contextToken: "",
+      contextUpdatedAt: "",
       getUpdatesBuf: "",
     };
     await this.#persistCredentials();
@@ -366,14 +397,11 @@ export class WeixinRemoteService {
             continue;
           }
           if (this.credentials.userId && fromUserId !== this.credentials.userId) continue;
-          if (
-            this.credentials.userId !== fromUserId
-            || this.credentials.contextToken !== contextToken
-          ) {
-            this.credentials.userId = fromUserId;
-            this.credentials.contextToken = contextToken;
-            changed = true;
-          }
+          this.credentials.userId = fromUserId;
+          this.credentials.contextToken = contextToken;
+          this.credentials.contextUpdatedAt = new Date().toISOString();
+          this.lastSendError = "";
+          changed = true;
         }
         if (changed) await this.#persistCredentials();
 
@@ -425,7 +453,7 @@ export class WeixinRemoteService {
       throw error;
     }
     try {
-      return await this.client.sendText({
+      const result = await this.client.sendText({
         botToken: this.credentials.botToken,
         baseUrl: this.credentials.baseUrl,
         toUserId: this.credentials.userId,
@@ -433,6 +461,12 @@ export class WeixinRemoteService {
         text,
         signal: options.signal,
       });
+      const deliveredAt = new Date().toISOString();
+      this.lastSendError = "";
+      this.lastSendAt = deliveredAt;
+      this.lastSendSuccessAt = deliveredAt;
+      this.#emitStatus();
+      return result;
     } catch (error) {
       if (isWeixinSessionExpiredError(error)) {
         await this.#invalidateSession("微信连接已失效，请重新扫码");
@@ -442,6 +476,16 @@ export class WeixinRemoteService {
           cause: error,
         });
       }
+      this.lastSendAt = new Date().toISOString();
+      this.lastSendError = deliveryFailureMessage(error);
+      this.logger.warn?.("[weixin] sendmessage failed", {
+        endpoint: error?.endpoint || "ilink/bot/sendmessage",
+        code: error?.code || "",
+        ret: error?.ret,
+        errcode: error?.errcode,
+        errmsg: error?.errmsg || error?.message || "",
+      });
+      this.#emitStatus();
       throw error;
     }
   }
@@ -449,6 +493,7 @@ export class WeixinRemoteService {
   async #invalidateSession(message) {
     this.pollController?.abort();
     this.credentials = null;
+    this.lastSendError = "";
     await this.clearCredentials();
     this.#emitStatus("error", { lastError: message, qrCodeUrl: "" });
   }

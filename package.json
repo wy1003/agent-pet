@@ -15,7 +15,8 @@
   "homepage": "https://github.com/wy1003/agent-pet#readme",
   "scripts": {
     "start": "node src/cli.mjs",
-    "companion": "electron desktop/main.mjs",
+    "companion": "node scripts/run-branded-companion.mjs",
+    "prepare:companion-icon": "node scripts/run-branded-companion.mjs --prepare-only --refresh",
     "test": "node --test",
     "generate:icon": "node scripts/generate-build-icon.mjs",
     "pack": "npm run generate:icon && electron-builder --dir",

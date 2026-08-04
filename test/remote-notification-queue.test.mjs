@@ -65,3 +65,21 @@ test("remote queue does not retry an unbound WeChat session", async () => {
   assert.equal(deliveries[0].status, "failed");
   assert.equal(deliveries[0].error, "remote_not_bound");
 });
+
+test("remote queue keeps both Tencent error code and diagnostic message", async () => {
+  const deliveries = [];
+  const queue = new RemoteNotificationQueue({
+    retryDelays: [0],
+    maxAttempts: 1,
+    sendMessage: async () => {
+      const error = new Error("bad context");
+      error.code = -2;
+      throw error;
+    },
+    onDelivery: (value) => deliveries.push(value),
+  });
+  queue.enqueue({ notificationId: "diagnostic", text: "message" });
+  await queue.whenIdle();
+  assert.equal(deliveries[0].status, "failed");
+  assert.equal(deliveries[0].error, "-2: bad context");
+});

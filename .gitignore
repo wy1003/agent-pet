@@ -16,6 +16,7 @@ coverage/
 *.pem
 .DS_Store
 Thumbs.db
+build/icon.ico
 
 # Local development planning and handoff notes
 TASKS.md

@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   DATA_LOCATION_FILE,
   PRODUCT_NAME,
+  PRODUCT_APP_ID,
   migrateLegacyUserData,
   productUserDataPath,
   resolveManagedDataRoot,
@@ -34,6 +35,7 @@ test("Agent Pet migrates only its valid JSON files into the product userData dir
   });
 
   assert.equal(PRODUCT_NAME, "Agent Pet");
+  assert.equal(PRODUCT_APP_ID, "io.github.wy1003.agentpet");
   assert.deepEqual(migrated, ["preferences.json"]);
   assert.deepEqual(JSON.parse(await readFile(path.join(target, "preferences.json"), "utf8")), {
     version: 8,

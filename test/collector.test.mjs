@@ -308,6 +308,7 @@ test("HTTP server provides the local task list UI", async (t) => {
   assert.match(settingsPage, /id="weixin-bind-stage"[^>]*hidden/);
   assert.match(settingsPage, /binding-icon binding-icon-pending/);
   assert.match(settingsPage, /id="weixin-connected-stage"[^>]*hidden/);
+  assert.match(settingsPage, /id="weixin-degraded-stage"[^>]*hidden/);
   assert.match(settingsPage, /data-page="community"/);
   assert.match(settingsPage, /data-settings-page="community"/);
   assert.match(settingsPage, /id="copy-community-group"/);
@@ -352,6 +353,7 @@ test("HTTP server provides the local task list UI", async (t) => {
   assert.match(settingsScriptText, /installAppUpdate/);
   assert.match(settingsScriptText, /weixinBindStage\.hidden = state !== "waiting_bind"/);
   assert.match(settingsScriptText, /weixinConnectedStage\.hidden = !connectionConfirmed/);
+  assert.match(settingsScriptText, /deliveryState === "degraded"/);
   assert.match(settingsScriptText, /COMMUNITY_GROUP_NUMBER = "650561994"/);
   assert.match(settingsScriptText, /copyCommunityGroupButton/);
   assert.doesNotMatch(settingsScriptText, /getNotificationHistory/);

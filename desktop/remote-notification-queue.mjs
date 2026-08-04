@@ -19,7 +19,10 @@ function wait(ms, signal) {
 }
 
 function deliveryError(error) {
-  return String(error?.code || error?.message || "remote_delivery_failed").slice(0, 300);
+  const code = String(error?.code || "").trim();
+  const message = String(error?.message || "").trim();
+  if (code && message && message !== code) return `${code}: ${message}`.slice(0, 300);
+  return String(code || message || "remote_delivery_failed").slice(0, 300);
 }
 
 export class RemoteNotificationQueue {

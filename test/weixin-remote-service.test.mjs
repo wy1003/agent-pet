@@ -93,14 +93,18 @@ test("remote service saves QR credentials, binds the first inbound context and s
   assert.match(connecting.qrCodeUrl, /^data:image\/png;base64,/);
   await waitFor(() => service.status().state === "connected");
   assert.equal(service.status().bound, true);
+  assert.equal(service.status().sendAvailable, true);
+  assert.equal(service.status().deliveryState, "ready");
   assert.equal(service.status().accountLabel, "已连接的微信");
   assert.equal("botToken" in service.status(), false);
   assert.equal("userId" in service.status(), false);
   assert.ok(saved.some((value) => value.botToken === "bot-token"));
   assert.ok(saved.some((value) => value.contextToken === "context-1"));
+  assert.ok(saved.some((value) => value.contextUpdatedAt));
   assert.ok(statusEvents.some((value) => value.state === "waiting_bind"));
 
   assert.deepEqual(await service.sendText("任务完成"), { ok: true });
+  assert.ok(service.status().lastSendSuccessAt);
   assert.deepEqual(sendCalls[0], {
     botToken: "bot-token",
     baseUrl: "https://edge.weixin.example",
@@ -109,6 +113,70 @@ test("remote service saves QR credentials, binds the first inbound context and s
     text: "任务完成",
     signal: undefined,
   });
+  await service.stop();
+});
+
+test("remote service exposes send degradation and clears it after a fresh inbound context", async () => {
+  let releaseInbound;
+  const inboundGate = new Promise((resolve) => { releaseInbound = resolve; });
+  let updateCalls = 0;
+  const saved = [];
+  const client = {
+    notifyStart: async () => ({ ok: true }),
+    notifyStop: async () => ({ ok: true }),
+    getUpdates: async ({ signal }) => {
+      updateCalls += 1;
+      if (updateCalls === 1) {
+        await inboundGate;
+        return {
+          ret: 0,
+          get_updates_buf: "cursor-2",
+          msgs: [{
+            message_type: 1,
+            from_user_id: "user",
+            context_token: "context-2",
+          }],
+        };
+      }
+      return waitUntilAbort(signal);
+    },
+    sendText: async () => {
+      throw new WeixinIlinkError("bad context", {
+        code: -2,
+        ret: -2,
+        errcode: -2,
+        errmsg: "bad context",
+        endpoint: "ilink/bot/sendmessage",
+      });
+    },
+  };
+  const service = new WeixinRemoteService({
+    client,
+    loadCredentials: async () => ({
+      botToken: "token",
+      accountId: "account",
+      baseUrl: "https://edge.weixin.example",
+      scannerUserId: "user",
+      userId: "user",
+      contextToken: "context-1",
+    }),
+    saveCredentials: async (value) => saved.push(value),
+    logger: { warn() {} },
+  });
+
+  await service.start();
+  await waitFor(() => service.status().state === "connected");
+  await assert.rejects(() => service.sendText("任务完成"), (error) => error?.code === -2);
+  assert.equal(service.status().deliveryState, "degraded");
+  assert.equal(service.status().sendAvailable, false);
+  assert.match(service.status().lastSendError, /-2/);
+  assert.match(service.status().lastSendError, /刷新连接/);
+
+  releaseInbound();
+  await waitFor(() => service.status().deliveryState === "ready");
+  assert.equal(service.status().sendAvailable, true);
+  assert.equal(service.status().lastSendError, "");
+  assert.ok(saved.some((value) => value.contextToken === "context-2" && value.contextUpdatedAt));
   await service.stop();
 });
 

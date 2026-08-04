@@ -19,6 +19,9 @@ export class WeixinIlinkError extends Error {
     this.endpoint = options.endpoint || "";
     this.httpStatus = options.httpStatus ?? null;
     this.sessionExpired = options.sessionExpired === true;
+    this.ret = Number.isFinite(Number(options.ret)) ? Number(options.ret) : null;
+    this.errcode = Number.isFinite(Number(options.errcode)) ? Number(options.errcode) : null;
+    this.errmsg = String(options.errmsg || "").slice(0, 300);
   }
 }
 
@@ -152,14 +155,18 @@ export class WeixinIlinkClient {
       }
       const code = apiErrorCode(payload);
       if (code) {
+        const errmsg = String(payload?.errmsg || `微信服务返回错误 ${code}`);
         throw new WeixinIlinkError(
           code === -14
             ? "微信连接已失效，请重新扫码"
-            : String(payload?.errmsg || `微信服务返回错误 ${code}`),
+            : errmsg,
           {
             code,
             endpoint,
             sessionExpired: code === -14,
+            ret: payload?.ret,
+            errcode: payload?.errcode,
+            errmsg,
           },
         );
       }
@@ -279,6 +286,9 @@ export class WeixinIlinkClient {
       headers: this.#postHeaders(options.botToken),
       body: JSON.stringify({
         msg: {
+          // AstrBot and Tencent's reference implementations keep this field even
+          // when the backend derives the sender from the bearer token.
+          from_user_id: "",
           client_id: clientId,
           to_user_id: toUserId,
           message_type: 2,

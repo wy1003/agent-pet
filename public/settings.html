@@ -621,6 +621,13 @@
             <p id="weixin-connected-account">现在可以接收 Agent Pet 的远程通知。</p>
           </div>
 
+          <div id="weixin-degraded-stage" class="weixin-connect-stage" hidden>
+            <div class="connection-degraded-icon" aria-hidden="true">!</div>
+            <strong>微信发送异常</strong>
+            <p id="weixin-degraded-error">接收连接仍在线，但最近一次微信通知发送失败。</p>
+            <small>请先在微信中向 Agent Pet 发送一条消息刷新会话，再点击“发送测试”。</small>
+          </div>
+
           <div id="weixin-error-stage" class="weixin-connect-stage" hidden>
             <div class="connection-error-icon" aria-hidden="true">!</div>
             <strong>连接没有完成</strong>

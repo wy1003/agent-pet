@@ -107,6 +107,7 @@ test("iLink client formats getUpdates and text delivery requests", async () => {
   });
   assert.deepEqual(JSON.parse(calls[1][1].body), {
     msg: {
+      from_user_id: "",
       client_id: "client-message-1",
       to_user_id: "user-1",
       message_type: 2,
@@ -148,6 +149,9 @@ test("iLink client exposes session expiry code -14 without leaking the token", a
     () => client.getUpdates({ botToken: "secret-token" }),
     (error) => {
       assert.equal(error.code, -14);
+      assert.equal(error.ret, 0);
+      assert.equal(error.errcode, -14);
+      assert.equal(error.errmsg, "expired");
       assert.equal(error.sessionExpired, true);
       assert.equal(isWeixinSessionExpiredError(error), true);
       assert.doesNotMatch(error.message, /secret-token/);

@@ -90,6 +90,8 @@ const weixinBindStage = document.querySelector("#weixin-bind-stage");
 const weixinReconnectingStage = document.querySelector("#weixin-reconnecting-stage");
 const weixinConnectedStage = document.querySelector("#weixin-connected-stage");
 const weixinConnectedAccount = document.querySelector("#weixin-connected-account");
+const weixinDegradedStage = document.querySelector("#weixin-degraded-stage");
+const weixinDegradedError = document.querySelector("#weixin-degraded-error");
 const weixinErrorStage = document.querySelector("#weixin-error-stage");
 const weixinDialogError = document.querySelector("#weixin-dialog-error");
 const weixinDialogStatus = document.querySelector("#weixin-dialog-status");
@@ -531,6 +533,7 @@ const WEIXIN_STATES = new Set([
   "waiting_bind",
   "reconnecting",
   "connected",
+  "degraded",
   "error",
 ]);
 
@@ -547,15 +550,20 @@ function normalizeWeixinStatus(result) {
   let state = WEIXIN_STATES.has(source.state) ? source.state : "disconnected";
   let connected = Boolean(source.connected);
   const bound = Boolean(source.bound);
+  const deliveryState = String(source.deliveryState || "");
   if (!bound) connected = false;
   if (state === "connected" && !(connected && bound)) state = "waiting_bind";
-  if (connected && bound) state = "connected";
+  if (connected && bound) state = deliveryState === "degraded" ? "degraded" : "connected";
   return {
     state,
     connected,
     bound,
+    sendAvailable: Boolean(source.sendAvailable),
+    deliveryState,
     qrCodeUrl: String(source.qrCodeUrl || ""),
     lastError: String(source.lastError || source.error || ""),
+    lastSendError: String(source.lastSendError || ""),
+    contextUpdatedAt: String(source.contextUpdatedAt || ""),
     accountLabel: String(source.accountLabel || ""),
   };
 }
@@ -594,6 +602,7 @@ function renderWeixinDialog(status) {
   weixinBindStage.hidden = state !== "waiting_bind";
   weixinReconnectingStage.hidden = state !== "reconnecting";
   weixinConnectedStage.hidden = !connectionConfirmed;
+  weixinDegradedStage.hidden = state !== "degraded";
   weixinErrorStage.hidden = state !== "error";
 
   if (qrVisible) {
@@ -619,6 +628,8 @@ function renderWeixinDialog(status) {
   weixinConnectedAccount.textContent = status.accountLabel
     ? `${status.accountLabel} 已连接，现在可以接收远程通知。`
     : "现在可以接收 Agent Pet 的远程通知。";
+  weixinDegradedError.textContent = status.lastSendError
+    || "接收连接仍在线，但最近一次微信通知发送失败。";
   weixinDialogError.textContent = status.lastError || "连接已中止，请重新尝试。";
 
   const dialogLabels = {
@@ -629,6 +640,7 @@ function renderWeixinDialog(status) {
     verification_required: "微信要求额外验证，提交验证码后将继续连接。",
     waiting_bind: "扫码已确认，正在等待微信消息以完成连接。",
     connected: "已收到绑定消息，连接信息已安全保存在本机。",
+    degraded: "微信接收通道在线，但发送能力需要恢复。",
     error: "连接没有完成。",
   };
   weixinDialogStatus.textContent = dialogLabels[state] || dialogLabels.disconnected;
@@ -645,6 +657,7 @@ function renderWeixinStatus(result) {
     verification_required: "等待验证",
     waiting_bind: "等待绑定",
     connected: "已连接",
+    degraded: "发送异常",
     error: "连接异常",
   };
   const descriptions = {
@@ -655,6 +668,7 @@ function renderWeixinStatus(result) {
     verification_required: "微信要求额外验证，请输入手机微信中显示的验证码。",
     waiting_bind: "扫码已确认，请在微信中向 Agent Pet 发送任意一条消息。",
     connected: "已收到绑定消息，任务通知可以发送到该微信。",
+    degraded: weixinState.lastSendError || "微信接收连接在线，但最近一次通知发送失败。",
     error: lastError || "连接发生异常，请重新连接。",
   };
 
@@ -666,11 +680,12 @@ function renderWeixinStatus(result) {
   weixinAccountLabel.textContent = accountLabel ? `当前账号：${accountLabel}` : "";
 
   const active = WEIXIN_ACTIVE_STATES.has(state);
-  const ready = state === "connected" && weixinState.connected && weixinState.bound;
+  const ready = ["connected", "degraded"].includes(state)
+    && weixinState.connected && weixinState.bound;
   const apiAvailable = hasWeixinConnectionApi();
   weixinConnectButton.hidden = state !== "disconnected";
   weixinContinueButton.hidden = !active;
-  weixinReconnectButton.hidden = !(state === "connected" || state === "reconnecting" || state === "error");
+  weixinReconnectButton.hidden = !(["connected", "degraded", "reconnecting", "error"].includes(state));
   weixinDisconnectButton.hidden = state === "disconnected";
   weixinConnectButton.disabled = weixinActionBusy || !apiAvailable;
   weixinContinueButton.disabled = weixinActionBusy;
