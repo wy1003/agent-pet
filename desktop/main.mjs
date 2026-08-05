@@ -36,8 +36,13 @@ import { DailyReportGenerator } from "./daily-report.mjs";
 import { NotificationOrchestrator } from "./notification-orchestrator.mjs";
 import { NotificationHistoryStore } from "./notification-history.mjs";
 import { RemoteNotificationQueue } from "./remote-notification-queue.mjs";
+import { RemoteChannelHub } from "./remote-channel-hub.mjs";
+import { RemoteTaskRegistry } from "./remote-task-registry.mjs";
+import { CodexRemoteExecutor } from "./codex-remote-executor.mjs";
+import { RemoteControlController } from "./remote-control-controller.mjs";
 import { SecureCredentials } from "./secure-credentials.mjs";
 import { WeixinRemoteService } from "./weixin-remote-service.mjs";
+import { createWeixinChannelAdapter } from "./remote-channels/weixin-channel.mjs";
 import { PhrasePoolStore } from "./phrase-pool.mjs";
 import { PreferenceStore } from "./preferences.mjs";
 import { TaskEventClient } from "./task-event-client.mjs";
@@ -51,6 +56,12 @@ import {
 import { PetLibrary } from "./pet/pet-library.mjs";
 import { PET_ANIMATION_PROFILE } from "./pet/pet-animation-profile.mjs";
 import { PET_DRAG_PROFILE } from "./pet/pet-drag-profile.mjs";
+import {
+  BUILTIN_PET,
+  BUILTIN_PET_ID,
+  builtinPetAssetPath,
+  builtinPetStateUrls,
+} from "./pet/builtin-pet.mjs";
 import {
   advanceInertia,
   appendVelocitySample,
@@ -166,6 +177,11 @@ let voicePlaybackQueue = null;
 let remoteNotificationQueue = null;
 let secureCredentials = null;
 let weixinRemoteService = null;
+let weixinChannelAdapter = null;
+let remoteChannelHub = null;
+let remoteTaskRegistry = null;
+let remoteCodexExecutor = null;
+let remoteControlController = null;
 let appUpdater = null;
 let loadedNotificationVoiceSignature = "";
 let managedDataRoot = null;
@@ -228,6 +244,10 @@ function notificationHistoryPath() {
   return path.join(managedRootPath(), "notification-history");
 }
 
+function remoteTaskRegistryPath() {
+  return path.join(managedRootPath(), "remote-control", "task-registry.json");
+}
+
 function scheduleCopywriter(preferences, delayMs) {
   codexCopywriter?.schedule(preferences.notifications.voice.style, delayMs);
 }
@@ -241,6 +261,26 @@ function settingsState() {
       mobileDelivery: true,
     },
   };
+}
+
+function remoteControlState() {
+  const fallback = preferenceStore?.get()?.remoteControl || {};
+  const controller = remoteControlController?.status();
+  return {
+    available: Boolean(
+      remoteControlController
+      && remoteTaskRegistry
+      && remoteChannelHub,
+    ),
+    enabled: controller?.enabled === true || (!controller && fallback.enabled === true),
+    projectCount: controller?.projects?.length || remoteTaskRegistry?.listProjects().length || 0,
+  };
+}
+
+function emitRemoteControlState() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.webContents.send("remote-control:changed", remoteControlState());
+  }
 }
 
 function storageLocationsState() {
@@ -387,28 +427,29 @@ function installDisplayHandlers() {
 
 function petStatePayload(state = petStateController?.snapshot()) {
   const preferences = preferenceStore?.get()?.appearance?.pet || {};
-  const availableStates = selectedPet?.format === "state-gifs"
-    ? Object.keys(selectedPet.states)
+  const pet = selectedPet || BUILTIN_PET;
+  const availableStates = pet.format === "state-gifs"
+    ? Object.keys(pet.states)
     : null;
   const requestedState = state || { state: "idle", generation: 0, oneShot: false, count: 0 };
-  const stateUrls = selectedPet?.format === "state-gifs"
-    ? Object.fromEntries(Object.entries(selectedPet.states).map(([name, fileName]) => [
+  const stateUrls = pet.id === BUILTIN_PET_ID
+    ? builtinPetStateUrls()
+    : Object.fromEntries(Object.entries(pet.states).map(([name, fileName]) => [
       name,
-      `pet-asset://library/${encodeURIComponent(selectedPet.id)}/${encodeURIComponent(fileName)}`,
-    ]))
-    : {};
+      `pet-asset://library/${encodeURIComponent(pet.id)}/${encodeURIComponent(fileName)}`,
+    ]));
   return {
     ...requestedState,
     state: resolveAvailablePetState(requestedState.state, availableStates),
     animationProfile: PET_ANIMATION_PROFILE,
     pet: {
-      id: selectedPet?.id || "builtin-default",
-      format: selectedPet?.format || "css-fallback",
+      id: pet.id,
+      format: pet.format,
       spriteUrl: "",
       stateUrls,
       spriteVersionNumber: 2,
       width: preferences.width || 112,
-      renderMode: preferences.renderMode || "pixelated",
+      renderMode: preferences.renderMode || "smooth",
       reducedMotion: preferences.reducedMotion || "system",
     },
   };
@@ -439,8 +480,9 @@ function sendPetState(state = petStateController?.snapshot(), overrideState = ""
   if (!badgeWindow || badgeWindow.isDestroyed() || badgeWindow.webContents.isLoading()) return;
   const payload = petStatePayload(state);
   if (overrideState) {
-    const availableStates = selectedPet?.format === "state-gifs"
-      ? Object.keys(selectedPet.states)
+    const pet = selectedPet || BUILTIN_PET;
+    const availableStates = pet.format === "state-gifs"
+      ? Object.keys(pet.states)
       : null;
     payload.state = resolveAvailablePetState(overrideState, availableStates);
   }
@@ -1007,8 +1049,25 @@ function createNotificationServices() {
     onDelivery: (delivery) => notificationOrchestrator?.handleVoiceDelivery(delivery),
   });
   remoteNotificationQueue = new RemoteNotificationQueue({
-    sendMessage: (item, options) => weixinRemoteService.sendText(item.text, options),
-    onDelivery: (delivery) => notificationOrchestrator?.handleRemoteDelivery(delivery),
+    sendMessage: (item, options) => {
+      const target = remoteChannelHub.getDefaultTarget(item.channelId, item.accountId);
+      if (!target.conversationId) {
+        const error = new Error("远程渠道尚未绑定可接收通知的会话");
+        error.code = "remote_not_bound";
+        error.transient = false;
+        throw error;
+      }
+      return remoteChannelHub.send({
+        ...target,
+        text: item.text,
+        clientId: item.providerClientId,
+        signal: options.signal,
+      });
+    },
+    onDelivery: async (delivery) => {
+      if (delivery.status === "sent") await remoteTaskRegistry?.recordDelivery(delivery);
+      await notificationOrchestrator?.handleRemoteDelivery(delivery);
+    },
     maxAttempts: 5,
     retryDelays: [0, 2_000, 5_000, 10_000, 20_000],
   });
@@ -1017,16 +1076,27 @@ function createNotificationServices() {
     phraseStore: phrasePoolStore,
     voiceQueue: voicePlaybackQueue,
     remoteQueue: remoteNotificationQueue,
+    resolveRemoteRoute: (task) => remoteTaskRegistry?.observeTask(task),
     showWindowsNotification: showTaskWindowsNotification,
     recordHistory: (record) => notificationHistory.append(record),
   });
   petStateController = new PetStateController({
-    availableStates: selectedPet?.format === "state-gifs" ? Object.keys(selectedPet.states) : null,
+    availableStates: Object.keys((selectedPet || BUILTIN_PET).states),
     onState: (state) => sendPetState(state),
   });
   sendPetState(petStateController.snapshot());
   taskEventClient = new TaskEventClient(serviceUrl, {
     onEvent: (event, value) => {
+      const observation = event === "snapshot"
+        ? remoteTaskRegistry?.observeSnapshot(value)
+        : event === "session.updated"
+          ? remoteTaskRegistry?.observeSession(value)
+          : (event === "task.created" || event === "task.updated")
+            ? remoteTaskRegistry?.observeTask(value)
+            : null;
+      observation?.then(emitRemoteControlState).catch((error) => {
+        console.warn("[remote-control] unable to update task registry", error);
+      });
       notificationOrchestrator.handleEvent(event, value);
       petStateController.handleEvent(event, value);
     },
@@ -1063,10 +1133,16 @@ function installPetAssetProtocol() {
   protocol.handle("pet-asset", async (request) => {
     try {
       const url = new URL(request.url);
-      if (url.hostname !== "library") return new Response("Not found", { status: 404 });
       const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
-      if (parts.length !== 2) return new Response("Not found", { status: 404 });
-      const content = await readFile(petLibrary.assetPath(parts[0], parts[1]));
+      let assetPath;
+      if (url.hostname === BUILTIN_PET_ID && parts.length === 1) {
+        assetPath = builtinPetAssetPath(parts[0]);
+      } else if (url.hostname === "library" && parts.length === 2) {
+        assetPath = petLibrary.assetPath(parts[0], parts[1]);
+      } else {
+        return new Response("Not found", { status: 404 });
+      }
+      const content = await readFile(assetPath);
       return new Response(content, {
         status: 200,
         headers: {
@@ -1451,6 +1527,23 @@ function installIpcHandlers() {
     requireTrustedSender(event);
     return settingsState();
   });
+  ipcMain.handle("remote-control:get", (event) => {
+    requireSettingsMainFrame(event);
+    return remoteControlState();
+  });
+  ipcMain.handle("remote-control:update", async (event, value) => {
+    requireSettingsMainFrame(event);
+    if (!value || typeof value !== "object" || typeof value.enabled !== "boolean") {
+      throw new TypeError("Invalid remote-control settings");
+    }
+    await preferenceStore.update({
+      remoteControl: {
+        enabled: value.enabled,
+      },
+    });
+    emitRemoteControlState();
+    return remoteControlState();
+  });
   ipcMain.handle("app:update-status", (event) => {
     requireSettingsMainFrame(event);
     return appUpdater?.status() || {
@@ -1479,11 +1572,15 @@ function installIpcHandlers() {
   });
   ipcMain.handle("settings:update", async (event, patch) => {
     requireTrustedSender(event);
+    if (patch && Object.prototype.hasOwnProperty.call(patch, "remoteControl")) {
+      throw new Error("Remote-control permissions require the dedicated settings API");
+    }
     const preferences = await preferenceStore.update(patch);
     applyPreferences(preferences);
     scheduleCopywriter(preferences);
     loadedNotificationVoiceSignature = "";
     notificationOrchestrator?.preferencesChanged();
+    emitRemoteControlState();
     return settingsState();
   });
   ipcMain.handle("settings:reset", async (event) => {
@@ -1494,6 +1591,7 @@ function installIpcHandlers() {
     scheduleCopywriter(preferences);
     loadedNotificationVoiceSignature = "";
     notificationOrchestrator?.preferencesChanged();
+    emitRemoteControlState();
     return settingsState();
   });
   ipcMain.handle("settings:storage:get", (event) => {
@@ -1525,6 +1623,7 @@ function installIpcHandlers() {
       lastError: "",
       lastSendError: "",
       contextUpdatedAt: "",
+      replyContextInvalid: false,
       accountLabel: "",
     };
   });
@@ -1687,7 +1786,7 @@ function installIpcHandlers() {
     const id = String(value || "");
     selectedPet = id === "builtin-default" ? null : await petLibrary.get(id);
     petStateController?.setAvailableStates(
-      selectedPet?.format === "state-gifs" ? Object.keys(selectedPet.states) : null,
+      Object.keys((selectedPet || BUILTIN_PET).states),
     );
     const preferences = await preferenceStore.update({
       appearance: { pet: { selectedPetId: selectedPet?.id || "builtin-default" } },
@@ -1703,7 +1802,7 @@ function installIpcHandlers() {
     await petLibrary.remove(id);
     if (selectedPet?.id === id) {
       selectedPet = null;
-      petStateController?.setAvailableStates(null);
+      petStateController?.setAvailableStates(Object.keys(BUILTIN_PET.states));
       const preferences = await preferenceStore.update({
         appearance: { pet: { selectedPetId: "builtin-default" } },
       });
@@ -1793,6 +1892,8 @@ function installIpcHandlers() {
 
 async function shutdownOwnedService() {
   appUpdater?.stop();
+  if (remoteControlController) await remoteControlController.stop();
+  remoteChannelHub?.stop();
   if (taskEventClient) await taskEventClient.stop();
   if (notificationOrchestrator) await notificationOrchestrator.stop();
   if (weixinRemoteService) await weixinRemoteService.stop();
@@ -1809,6 +1910,11 @@ async function shutdownOwnedService() {
   petStateController = null;
   voicePlaybackQueue = null;
   remoteNotificationQueue = null;
+  remoteControlController = null;
+  remoteChannelHub = null;
+  weixinChannelAdapter = null;
+  remoteCodexExecutor = null;
+  remoteTaskRegistry = null;
   weixinRemoteService = null;
   secureCredentials = null;
 }
@@ -1853,6 +1959,8 @@ if (!hasSingleInstanceLock) {
         console.log(`[agent-pet] using compatible managed data root: ${managedDataRoot}`);
       }
       preferenceStore = new PreferenceStore(preferencesPath());
+      remoteTaskRegistry = new RemoteTaskRegistry(remoteTaskRegistryPath());
+      await remoteTaskRegistry.load();
       voiceLibrary = new VoiceLibrary(voiceLibraryPath());
       petLibrary = new PetLibrary(petLibraryPath());
       installPetAssetProtocol();
@@ -1868,6 +1976,11 @@ if (!hasSingleInstanceLock) {
           if (settingsWindow && !settingsWindow.isDestroyed()) {
             settingsWindow.webContents.send("weixin:status-changed", status);
           }
+          emitRemoteControlState();
+        },
+        onInbound: (message, metadata) => {
+          const inbound = weixinChannelAdapter?.normalizeInbound(message, metadata);
+          return inbound ? remoteChannelHub?.handleInbound(inbound) : undefined;
         },
       });
       appUpdater = new AppUpdater({
@@ -1889,6 +2002,24 @@ if (!hasSingleInstanceLock) {
         cacheDirectory: dailyReportCachePath(),
       });
       const preferences = await preferenceStore.load();
+      remoteCodexExecutor = new CodexRemoteExecutor();
+      remoteChannelHub = new RemoteChannelHub();
+      weixinChannelAdapter = createWeixinChannelAdapter({
+        service: weixinRemoteService,
+        accountId: "primary",
+      });
+      remoteChannelHub.register(weixinChannelAdapter);
+      remoteControlController = new RemoteControlController({
+        registry: remoteTaskRegistry,
+        executor: remoteCodexExecutor,
+        getPolicy: () => preferenceStore.get().remoteControl || {},
+        authorizeInbound: (inbound) => remoteChannelHub.isAuthorized(inbound),
+        getChannelCapabilities: (channelId, inbound) => (
+          remoteChannelHub.getCapabilities(channelId, inbound?.accountId)
+        ),
+        reply: (inbound, message) => remoteChannelHub.reply(message, { inbound }),
+      });
+      remoteChannelHub.setController(remoteControlController);
       await refreshSelectedPet(preferences.appearance.pet.selectedPetId);
       applyPreferences(preferences);
       installIpcHandlers();

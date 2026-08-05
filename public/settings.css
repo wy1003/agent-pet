@@ -926,6 +926,208 @@ h2 {
   color: var(--danger);
 }
 
+.integration-notice {
+  display: flex;
+  grid-column: 1 / -1;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, #b47a1e 28%, var(--line));
+  border-radius: 9px;
+  color: #6f4b14;
+  background: color-mix(in srgb, #f8edcf 58%, var(--card));
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.integration-notice-icon {
+  display: inline-flex;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+  border-radius: 50%;
+  color: #fff;
+  background: #b47a1e;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.integration-notice strong,
+.integration-notice small {
+  display: block;
+}
+
+.integration-notice small {
+  margin-top: 2px;
+  color: color-mix(in srgb, #6f4b14 82%, var(--muted));
+  overflow-wrap: anywhere;
+}
+
+.remote-control-card {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 11px;
+  min-width: 0;
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--canvas) 56%, var(--card));
+}
+
+.remote-control-card[data-state="enabled"] {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 30%, var(--card));
+}
+
+.remote-control-card[data-state="unavailable"] {
+  opacity: 0.74;
+}
+
+.remote-control-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.remote-control-heading > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.remote-control-heading strong {
+  font-size: 11px;
+}
+
+.remote-control-heading small {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.remote-control-toggle {
+  flex: 0 0 auto;
+}
+
+.remote-control-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.remote-control-status[data-state="success"] {
+  color: var(--accent);
+}
+
+.remote-control-status[data-state="error"] {
+  color: var(--danger);
+}
+
+.remote-command-help {
+  min-width: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.remote-command-help summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 750;
+  list-style: none;
+}
+
+.remote-command-help summary::-webkit-details-marker {
+  display: none;
+}
+
+.remote-command-help summary::after {
+  content: "+";
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--muted);
+  background: var(--card);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.remote-command-help[open] summary::after {
+  content: "−";
+}
+
+.remote-command-help-body {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  margin-top: 9px;
+}
+
+.remote-command-help-body > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.remote-command-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.remote-command-list li {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+}
+
+.remote-command-list code {
+  min-width: 0;
+  color: var(--ink);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.remote-command-list span {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 @container (max-width: 520px) {
   .integration-card {
     grid-template-columns: minmax(0, 1fr);
@@ -942,6 +1144,10 @@ h2 {
   .integration-actions .secondary-button {
     flex: 1 1 112px;
   }
+
+  .remote-command-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @container (max-width: 330px) {
@@ -953,6 +1159,11 @@ h2 {
     width: 40px;
     height: 40px;
     flex-basis: 40px;
+  }
+
+  .remote-control-heading {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 

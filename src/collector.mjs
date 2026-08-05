@@ -15,6 +15,7 @@ import {
 import { defaultIgnoredProjectPaths, normalizeProjectPath } from "./internal-projects.mjs";
 
 const READ_CHUNK_BYTES = 64 * 1024;
+const SUBAGENT_FAST_SKIP_BYTES = 8 * 1024 * 1024;
 
 async function listJsonlFiles(root) {
   const files = [];
@@ -102,6 +103,10 @@ export class CodexActivityCollector extends EventEmitter {
     );
     this.queuedAfterMs = Math.max(0, Number(options.queuedAfterMs ?? 1_000));
     this.includeSubagents = Boolean(options.includeSubagents);
+    this.subagentFastSkipBytes = Math.max(
+      1,
+      Number(options.subagentFastSkipBytes ?? SUBAGENT_FAST_SKIP_BYTES),
+    );
     this.ignoredProjectPaths = new Set(
       (options.ignoredProjectPaths || defaultIgnoredProjectPaths())
         .filter(Boolean)
@@ -414,6 +419,7 @@ export class CodexActivityCollector extends EventEmitter {
         sessionId: null,
         ownerResolved: false,
         ignored: false,
+        contentSkipped: false,
       };
       this.files.set(filePath, fileState);
     }
@@ -423,28 +429,52 @@ export class CodexActivityCollector extends EventEmitter {
       fileState.sessionId = null;
       fileState.ownerResolved = false;
       fileState.ignored = false;
+      fileState.contentSkipped = false;
+    }
+    if (fileState.ignored || fileState.contentSkipped) {
+      fileState.offset = info.size;
+      fileState.pending = Buffer.alloc(0);
+      return;
     }
     if (info.size === fileState.offset) return;
 
     const handle = await open(filePath, "r");
     try {
       let position = fileState.offset;
-      const buffers = [fileState.pending];
+      let pending = fileState.pending;
       while (position < info.size) {
         const length = Math.min(READ_CHUNK_BYTES, info.size - position);
         const buffer = Buffer.allocUnsafe(length);
         const { bytesRead } = await handle.read(buffer, 0, length, position);
         if (!bytesRead) break;
-        buffers.push(buffer.subarray(0, bytesRead));
         position += bytesRead;
+        const current = buffer.subarray(0, bytesRead);
+        const complete = pending.length ? Buffer.concat([pending, current]) : current;
+        const split = splitCompleteLines(complete);
+        pending = Buffer.from(split.pending);
+        let skipRemainder = false;
+        for (const line of split.lines) {
+          if (!line.trim()) continue;
+          this.#processLine(filePath, fileState, line);
+          const owner = fileState.sessionId ? this.sessions.get(fileState.sessionId) : null;
+          if (fileState.ignored || (
+            !this.includeSubagents
+            && info.size >= this.subagentFastSkipBytes
+            && owner?.threadSource === "subagent"
+          )) {
+            fileState.contentSkipped = !fileState.ignored;
+            skipRemainder = true;
+            break;
+          }
+        }
+        if (skipRemainder) {
+          position = info.size;
+          pending = Buffer.alloc(0);
+          break;
+        }
       }
       fileState.offset = position;
-      const { lines, pending } = splitCompleteLines(Buffer.concat(buffers));
       fileState.pending = Buffer.from(pending);
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        this.#processLine(filePath, fileState, line);
-      }
     } finally {
       await handle.close();
     }

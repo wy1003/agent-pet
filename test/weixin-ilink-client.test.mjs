@@ -97,7 +97,11 @@ test("iLink client formats getUpdates and text delivery requests", async () => {
     contextToken: "context-1",
     text: "任务完成",
   });
-  assert.deepEqual(delivery, { ok: true, messageId: "client-message-1" });
+  assert.deepEqual(delivery, {
+    ok: true,
+    messageId: "client-message-1",
+    clientId: "client-message-1",
+  });
 
   assert.equal(calls[0][0], "https://edge.weixin.example/ilink/bot/getupdates");
   assert.equal(calls[0][1].headers.Authorization, "Bearer bot-token");

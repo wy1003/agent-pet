@@ -7,6 +7,8 @@ import {
 } from "./weixin-ilink-client.mjs";
 import QRCode from "qrcode";
 
+const WEIXIN_REPLY_CONTEXT_MESSAGE = "微信回复状态暂时失效。长时间未与 Agent Pet 对话时可能出现此问题；请在微信中向 Agent Pet 发送任意消息恢复任务通知，无需重新扫码。";
+
 function delay(ms, signal) {
   if (signal?.aborted) return Promise.reject(signal.reason || new DOMException("Aborted", "AbortError"));
   return new Promise((resolve, reject) => {
@@ -29,13 +31,28 @@ function isAbortError(error) {
   return error?.name === "AbortError";
 }
 
+function isReplyContextError(error) {
+  return [error?.code, error?.ret, error?.errcode].some((value) => Number(value) === -2);
+}
+
 function deliveryFailureMessage(error) {
   const code = String(error?.code || "").trim();
   const detail = String(error?.errmsg || error?.message || "微信通知发送失败").trim();
-  if (Number(error?.code) === -2) {
-    return `微信拒绝发送（-2：${detail}）。会话上下文可能已经失效，请先在微信中向 Agent Pet 发送一条消息刷新连接。`;
-  }
+  if (isReplyContextError(error)) return WEIXIN_REPLY_CONTEXT_MESSAGE;
   return code && detail !== code ? `${code}：${detail}` : (detail || code);
+}
+
+function isPrivateMessage(message) {
+  return Number(message?.message_type) === 1
+    && !String(message?.group_id || "").trim();
+}
+
+function isTextMessage(message) {
+  if (!isPrivateMessage(message)) return false;
+  return (Array.isArray(message?.item_list) ? message.item_list : []).some((item) => (
+    (Number(item?.type) === 1 || item?.text_item?.text != null)
+    && Boolean(String(item?.text_item?.text || "").trim())
+  ));
 }
 
 function normalizeCredentials(value) {
@@ -61,8 +78,10 @@ export class WeixinRemoteService {
     this.saveCredentials = options.saveCredentials || (async () => {});
     this.clearCredentials = options.clearCredentials || (async () => {});
     this.onStatus = options.onStatus || (() => {});
+    this.onInbound = options.onInbound || (async () => {});
     this.client = options.client || new WeixinIlinkClient(options.clientOptions);
     this.logger = options.logger || console;
+    this.now = options.now || (() => Date.now());
     this.retryMs = Math.max(10, Number(options.retryMs || 1_500));
     this.retryMaxMs = Math.max(this.retryMs, Number(options.retryMaxMs || 30_000));
     this.qrPollDelayMs = Math.max(10, Number(options.qrPollDelayMs || 500));
@@ -80,6 +99,8 @@ export class WeixinRemoteService {
     this.lastSendError = "";
     this.lastSendAt = "";
     this.lastSendSuccessAt = "";
+    this.replyContextInvalid = false;
+    this.inboundSeenSinceStart = false;
     this.started = false;
     this.loginController = null;
     this.loginPromise = null;
@@ -93,13 +114,18 @@ export class WeixinRemoteService {
   status() {
     const bound = Boolean(this.credentials?.userId && this.credentials?.contextToken);
     const connected = this.state === "connected";
+    const replyContextInvalid = bound && this.replyContextInvalid;
+    const lastSendError = this.lastSendError
+      || (replyContextInvalid ? WEIXIN_REPLY_CONTEXT_MESSAGE : "");
     const deliveryState = !bound
       ? "unavailable"
-      : this.lastSendError
-        ? "degraded"
-        : connected
-          ? "ready"
-          : "recovering";
+      : replyContextInvalid
+        ? "reply_context_invalid"
+        : lastSendError
+          ? "degraded"
+          : connected
+            ? "ready"
+            : "recovering";
     return {
       state: this.state,
       connected,
@@ -108,12 +134,22 @@ export class WeixinRemoteService {
       deliveryState,
       qrCodeUrl: this.qrCodeUrl,
       lastError: this.lastError,
-      lastSendError: this.lastSendError,
+      lastSendError,
       lastSendAt: this.lastSendAt,
       lastSendSuccessAt: this.lastSendSuccessAt,
       contextUpdatedAt: this.credentials?.contextUpdatedAt || "",
+      replyContextInvalid,
       accountLabel: this.credentials ? "已连接的微信" : "",
     };
+  }
+
+  isBoundUser(userId) {
+    const value = String(userId || "").trim();
+    return Boolean(
+      value
+      && this.credentials?.userId === value
+      && this.credentials?.contextToken,
+    );
   }
 
   #emitStatus(state = this.state, changes = {}) {
@@ -141,8 +177,10 @@ export class WeixinRemoteService {
   async start() {
     if (this.started) return this.status();
     this.started = true;
+    this.inboundSeenSinceStart = false;
     try {
       this.credentials = normalizeCredentials(await this.loadCredentials());
+      this.replyContextInvalid = false;
     } catch (error) {
       this.credentials = null;
       this.logger.warn?.("[weixin] failed to load credentials", error);
@@ -171,6 +209,8 @@ export class WeixinRemoteService {
     this.lastSendError = "";
     this.lastSendAt = "";
     this.lastSendSuccessAt = "";
+    this.replyContextInvalid = false;
+    this.inboundSeenSinceStart = false;
 
     const controller = new AbortController();
     this.loginController = controller;
@@ -378,18 +418,10 @@ export class WeixinRemoteService {
           signal,
         });
         if (signal.aborted || !this.credentials) return;
-        this.consecutivePollFailures = 0;
-
-        let changed = false;
-        if (
-          typeof response?.get_updates_buf === "string"
-          && response.get_updates_buf !== this.credentials.getUpdatesBuf
-        ) {
-          this.credentials.getUpdatesBuf = response.get_updates_buf;
-          changed = true;
-        }
+        let credentialsChanged = false;
+        let contextRefreshed = false;
         for (const message of Array.isArray(response?.msgs) ? response.msgs : []) {
-          if (Number(message?.message_type) !== 1) continue;
+          if (!isPrivateMessage(message)) continue;
           const fromUserId = String(message?.from_user_id || "").trim();
           const contextToken = String(message?.context_token || "").trim();
           if (!fromUserId || !contextToken) continue;
@@ -397,16 +429,39 @@ export class WeixinRemoteService {
             continue;
           }
           if (this.credentials.userId && fromUserId !== this.credentials.userId) continue;
+          const wasBoundUser = this.isBoundUser(fromUserId);
+          const wasReplyContextInvalid = this.replyContextInvalid;
+          const connectionEvent = !wasBoundUser
+            ? "connected"
+            : (wasReplyContextInvalid || !this.inboundSeenSinceStart ? "restored" : "");
           this.credentials.userId = fromUserId;
           this.credentials.contextToken = contextToken;
-          this.credentials.contextUpdatedAt = new Date().toISOString();
+          this.credentials.contextUpdatedAt = new Date(this.now()).toISOString();
           this.lastSendError = "";
-          changed = true;
+          this.replyContextInvalid = false;
+          contextRefreshed = true;
+          credentialsChanged = true;
+          await this.#persistCredentials();
+          if (isTextMessage(message)) {
+            await this.onInbound(message, { connectionEvent });
+            this.inboundSeenSinceStart = true;
+          }
         }
-        if (changed) await this.#persistCredentials();
+
+        const nextUpdatesBuf = typeof response?.get_updates_buf === "string"
+          ? response.get_updates_buf
+          : this.credentials.getUpdatesBuf;
+        if (nextUpdatesBuf !== this.credentials.getUpdatesBuf) {
+          this.credentials.getUpdatesBuf = nextUpdatesBuf;
+          credentialsChanged = true;
+          await this.#persistCredentials();
+        } else if (credentialsChanged) {
+          await this.saveChain;
+        }
+        this.consecutivePollFailures = 0;
 
         const bound = Boolean(this.credentials.userId && this.credentials.contextToken);
-        if (bound && (this.state !== "connected" || this.lastError)) {
+        if (bound && (contextRefreshed || this.state !== "connected" || this.lastError)) {
           this.#emitStatus("connected", { lastError: "", qrCodeUrl: "" });
         } else if (!bound && (this.state !== "waiting_bind" || this.lastError)) {
           this.#emitStatus("waiting_bind", { lastError: "", qrCodeUrl: "" });
@@ -459,10 +514,12 @@ export class WeixinRemoteService {
         toUserId: this.credentials.userId,
         contextToken: this.credentials.contextToken,
         text,
+        clientId: options.clientId,
         signal: options.signal,
       });
-      const deliveredAt = new Date().toISOString();
+      const deliveredAt = new Date(this.now()).toISOString();
       this.lastSendError = "";
+      this.replyContextInvalid = false;
       this.lastSendAt = deliveredAt;
       this.lastSendSuccessAt = deliveredAt;
       this.#emitStatus();
@@ -476,7 +533,30 @@ export class WeixinRemoteService {
           cause: error,
         });
       }
-      this.lastSendAt = new Date().toISOString();
+      if (isReplyContextError(error)) {
+        this.lastSendAt = new Date(this.now()).toISOString();
+        this.lastSendError = WEIXIN_REPLY_CONTEXT_MESSAGE;
+        this.replyContextInvalid = true;
+        this.logger.warn?.("[weixin] reply context invalid", {
+          endpoint: error?.endpoint || "ilink/bot/sendmessage",
+          code: error?.code || "",
+          ret: error?.ret,
+          errcode: error?.errcode,
+          errmsg: error?.errmsg || error?.message || "",
+        });
+        this.#emitStatus();
+        const replyContextError = new WeixinIlinkError(WEIXIN_REPLY_CONTEXT_MESSAGE, {
+          code: "reply_context_invalid",
+          endpoint: error?.endpoint || "ilink/bot/sendmessage",
+          ret: error?.ret,
+          errcode: error?.errcode,
+          errmsg: error?.errmsg || error?.message || "",
+          cause: error,
+        });
+        replyContextError.transient = false;
+        throw replyContextError;
+      }
+      this.lastSendAt = new Date(this.now()).toISOString();
       this.lastSendError = deliveryFailureMessage(error);
       this.logger.warn?.("[weixin] sendmessage failed", {
         endpoint: error?.endpoint || "ilink/bot/sendmessage",
@@ -494,6 +574,8 @@ export class WeixinRemoteService {
     this.pollController?.abort();
     this.credentials = null;
     this.lastSendError = "";
+    this.replyContextInvalid = false;
+    this.inboundSeenSinceStart = false;
     await this.clearCredentials();
     this.#emitStatus("error", { lastError: message, qrCodeUrl: "" });
   }
@@ -525,6 +607,9 @@ export class WeixinRemoteService {
     await this.#stopLogin();
     await this.#stopPolling();
     this.credentials = null;
+    this.lastSendError = "";
+    this.replyContextInvalid = false;
+    this.inboundSeenSinceStart = false;
     await this.clearCredentials();
     return this.#emitStatus("disconnected", { lastError: "", qrCodeUrl: "" });
   }
@@ -533,8 +618,12 @@ export class WeixinRemoteService {
     await this.#stopLogin();
     await this.#stopPolling();
     this.started = false;
+    this.inboundSeenSinceStart = false;
     return this.#emitStatus("disconnected", { lastError: "", qrCodeUrl: "" });
   }
 }
 
-export { normalizeCredentials };
+export {
+  WEIXIN_REPLY_CONTEXT_MESSAGE,
+  normalizeCredentials,
+};

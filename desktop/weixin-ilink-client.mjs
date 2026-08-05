@@ -302,7 +302,7 @@ export class WeixinIlinkClient {
       timeoutMs: options.timeoutMs || this.timeoutMs,
       signal: options.signal,
     });
-    return { ok: true, messageId: clientId };
+    return { ok: true, messageId: clientId, clientId };
   }
 }
 

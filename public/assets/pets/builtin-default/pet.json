@@ -1,0 +1,22 @@
+{
+  "id": "builtin-default",
+  "displayName": "小团",
+  "description": "圆润、安静的极简小白猫",
+  "format": "state-gifs",
+  "spriteVersionNumber": 2,
+  "width": 192,
+  "height": 208,
+  "states": {
+    "idle": "builtin-default-idle.gif",
+    "running-right": "builtin-default-running-right.gif",
+    "running-left": "builtin-default-running-left.gif",
+    "waving": "builtin-default-waving.gif",
+    "jumping": "builtin-default-jumping.gif",
+    "failed": "builtin-default-failed.gif",
+    "waiting": "builtin-default-waiting.gif",
+    "running": "builtin-default-running.gif",
+    "review": "builtin-default-review.gif",
+    "look-right-side": "builtin-default-look-right-side.gif",
+    "look-left-side": "builtin-default-look-left-side.gif"
+  }
+}

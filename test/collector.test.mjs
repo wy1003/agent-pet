@@ -309,6 +309,23 @@ test("HTTP server provides the local task list UI", async (t) => {
   assert.match(settingsPage, /binding-icon binding-icon-pending/);
   assert.match(settingsPage, /id="weixin-connected-stage"[^>]*hidden/);
   assert.match(settingsPage, /id="weixin-degraded-stage"[^>]*hidden/);
+  assert.match(settingsPage, /长时间未互动可能暂停通知/);
+  assert.doesNotMatch(settingsPage, /24 小时回复限制/);
+  assert.match(settingsPage, /发送任意消息即可恢复，无需重新扫码/);
+  assert.match(settingsPage, /id="remote-control" class="remote-control-card"/);
+  assert.match(settingsPage, /id="remote-control-enabled"/);
+  assert.match(settingsPage, /id="remote-command-help" class="remote-command-help"/);
+  assert.match(settingsPage, /<summary>查看指令帮助<\/summary>/);
+  assert.match(settingsPage, /只有以 <code>\/<\/code> 开头的消息会执行任务；首次连接或恢复时会返回简短引导，发送“帮助”可查看完整指令/);
+  assert.doesNotMatch(settingsPage, /remote-project-list|允许操作的项目/);
+  assert.match(settingsPage, /\/help/);
+  assert.match(settingsPage, /\/projects/);
+  assert.match(settingsPage, /\/sessions/);
+  assert.match(settingsPage, /\/P001 新任务：要求/);
+  assert.match(settingsPage, /\/S0001 要求/);
+  assert.match(settingsPage, /\/S0001 状态/);
+  assert.match(settingsPage, /\/S0001 停止/);
+  assert.match(settingsPage, /\/S0001 重试/);
   assert.match(settingsPage, /data-page="community"/);
   assert.match(settingsPage, /data-settings-page="community"/);
   assert.match(settingsPage, /id="copy-community-group"/);
@@ -336,6 +353,13 @@ test("HTTP server provides the local task list UI", async (t) => {
     settingsStylesText,
     /\.weixin-connect-stage\[hidden\]\s*\{[^}]*display:\s*none/s,
   );
+  assert.match(settingsStylesText, /\.integration-notice\s*\{/);
+  assert.match(settingsStylesText, /\.remote-command-help\s*\{/);
+  assert.match(
+    settingsStylesText,
+    /\.remote-command-list\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s,
+  );
+  assert.doesNotMatch(settingsStylesText, /\.remote-project-list/);
 
   const settingsScript = await fetch(`${base}/settings.js`);
   assert.equal(settingsScript.status, 200);
@@ -353,7 +377,11 @@ test("HTTP server provides the local task list UI", async (t) => {
   assert.match(settingsScriptText, /installAppUpdate/);
   assert.match(settingsScriptText, /weixinBindStage\.hidden = state !== "waiting_bind"/);
   assert.match(settingsScriptText, /weixinConnectedStage\.hidden = !connectionConfirmed/);
-  assert.match(settingsScriptText, /deliveryState === "degraded"/);
+  assert.match(settingsScriptText, /"reply_context_invalid"/);
+  assert.match(settingsScriptText, /replyContextInvalid/);
+  assert.match(settingsScriptText, /getRemoteControlSettings/);
+  assert.match(settingsScriptText, /updateRemoteControlSettings/);
+  assert.doesNotMatch(settingsScriptText, /allowedProjectCodes|remoteProjectList/);
   assert.match(settingsScriptText, /COMMUNITY_GROUP_NUMBER = "650561994"/);
   assert.match(settingsScriptText, /copyCommunityGroupButton/);
   assert.doesNotMatch(settingsScriptText, /getNotificationHistory/);
@@ -1223,4 +1251,60 @@ test("three child rollouts cannot inflate one running user task into seven recor
   assert.deepEqual(collector.getTasks().map((task) => task.taskId), [
     "codex:root-session:root-turn",
   ]);
+});
+
+test("large subagent rollouts stop reading after their ownership metadata", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codex-large-subagent-test-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const day = path.join(root, "sessions", "2026", "08", "05");
+  const file = path.join(day, "rollout-large-child.jsonl");
+  await mkdir(day, { recursive: true });
+  await writeFile(
+    file,
+    line(
+      "session_meta",
+      {
+        id: "large-child",
+        session_id: "large-child",
+        parent_thread_id: "root-session",
+        cwd: "D:\\project\\AgentPet",
+        thread_source: "subagent",
+      },
+      "2026-08-05T10:00:00.000Z",
+    ) + line(
+      "event_msg",
+      { type: "task_started", turn_id: "child-turn" },
+      "2026-08-05T10:00:01.000Z",
+    ) + line(
+      "event_msg",
+      { type: "user_message", message: "must not be parsed" },
+      "2026-08-05T10:00:02.000Z",
+    ),
+    "utf8",
+  );
+
+  const collector = new CodexActivityCollector({
+    codexHome: root,
+    statePath: false,
+    subagentFastSkipBytes: 1,
+  });
+  await collector.scanOnce();
+
+  assert.deepEqual(
+    collector.getSessions({ includeSubagents: true }).map((session) => session.sessionId),
+    ["large-child"],
+  );
+  assert.deepEqual(collector.getTasks({ includeSubagents: true, scope: "all" }), []);
+
+  await appendFile(
+    file,
+    line(
+      "event_msg",
+      { type: "task_complete", turn_id: "child-turn", last_agent_message: "done" },
+      "2026-08-05T10:00:03.000Z",
+    ),
+    "utf8",
+  );
+  await collector.scanOnce();
+  assert.deepEqual(collector.getTasks({ includeSubagents: true, scope: "all" }), []);
 });

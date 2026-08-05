@@ -12,7 +12,7 @@ const PET_RENDER_MODES = ["pixelated", "smooth"];
 const PET_REDUCED_MOTION = ["system", "reduce", "full"];
 
 export const DEFAULT_PREFERENCES = Object.freeze({
-  version: 10,
+  version: 13,
   rules: {
     needs_input: true,
     completed: true,
@@ -61,6 +61,9 @@ export const DEFAULT_PREFERENCES = Object.freeze({
       contentLevel: "standard",
     },
   },
+  remoteControl: {
+    enabled: false,
+  },
   dailyReport: {
     contentLevel: "standard",
   },
@@ -78,7 +81,7 @@ export const DEFAULT_PREFERENCES = Object.freeze({
     pet: {
       selectedPetId: "builtin-default",
       width: 112,
-      renderMode: "pixelated",
+      renderMode: "smooth",
       hoverAnimation: true,
       lookAtCursor: true,
       reducedMotion: "system",
@@ -158,10 +161,15 @@ export function normalizePreferences(value) {
   const resetLegacyStyleNames = Number(input.version || 0) < 8;
   const gptSovits = object(voice.gptSovits);
   const mobile = object(inputNotifications.mobile);
+  const remoteControl = object(input.remoteControl);
+  const legacyRemoteControlWeixin = object(remoteControl.weixin);
   const dailyReport = object(input.dailyReport);
   const quietHours = object(input.quietHours);
   const appearance = object(input.appearance);
   const pet = object(appearance.pet);
+  const migrateBuiltinPetToSmoothRendering = Number(input.version || 0) < 11
+    && (!pet.selectedPetId || pet.selectedPetId === "builtin-default")
+    && pet.renderMode === "pixelated";
   const integrations = object(input.integrations);
   const petdex = object(integrations.petdex);
   const startup = object(input.startup);
@@ -171,7 +179,7 @@ export function normalizePreferences(value) {
   );
 
   return {
-    version: 10,
+    version: 13,
     rules,
     notifications: {
       windows: {
@@ -276,6 +284,14 @@ export function normalizePreferences(value) {
         ),
       },
     },
+    remoteControl: {
+      enabled: boolean(
+        remoteControl.enabled,
+        Number(input.version || 0) < 13
+          ? boolean(legacyRemoteControlWeixin.enabled, defaults.remoteControl.enabled)
+          : defaults.remoteControl.enabled,
+      ),
+    },
     dailyReport: {
       contentLevel: oneOf(
         dailyReport.contentLevel,
@@ -300,11 +316,13 @@ export function normalizePreferences(value) {
           ? pet.selectedPetId
           : defaults.appearance.pet.selectedPetId,
         width: numberInRange(pet.width, defaults.appearance.pet.width, 80, 224),
-        renderMode: oneOf(
-          pet.renderMode,
-          PET_RENDER_MODES,
-          defaults.appearance.pet.renderMode,
-        ),
+        renderMode: migrateBuiltinPetToSmoothRendering
+          ? "smooth"
+          : oneOf(
+            pet.renderMode,
+            PET_RENDER_MODES,
+            defaults.appearance.pet.renderMode,
+          ),
         hoverAnimation: boolean(pet.hoverAnimation, defaults.appearance.pet.hoverAnimation),
         lookAtCursor: boolean(pet.lookAtCursor, defaults.appearance.pet.lookAtCursor),
         reducedMotion: oneOf(

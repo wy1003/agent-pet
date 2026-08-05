@@ -1,15 +1,22 @@
 import path from "node:path";
+import { parseRemoteRequest } from "./remote-request.mjs";
 import { cleanUserText, makePreview, makeTitle, normalizeMessageText } from "./text.mjs";
-
-const PROJECT_NAME_ALIASES = new Map([
-  ["codexactivitycompanion", "Agent Pet"],
-  ["codex-task-companion", "Agent Pet"],
-  ["agentpet", "Agent Pet"],
-  ["agent-pet", "Agent Pet"],
-]);
 
 function sourceValue(source) {
   return typeof source === "string" ? source : "";
+}
+
+function baseInstructionsText(meta) {
+  if (typeof meta?.base_instructions === "string") return meta.base_instructions;
+  return typeof meta?.base_instructions?.text === "string"
+    ? meta.base_instructions.text
+    : "";
+}
+
+function detectProjectKind(meta) {
+  return /^### Projectless Chat\s*$/im.test(baseInstructionsText(meta))
+    ? "projectless"
+    : "project";
 }
 
 function normalizeThreadSource(value) {
@@ -121,8 +128,10 @@ export function createSession(meta, filePath, recordTimestamp) {
   const cwd = String(meta.cwd || "");
   const source = classifySource(meta);
   const threadSource = detectThreadSource(meta);
-  const leafName = cwd ? path.basename(path.resolve(cwd)) : "未知项目";
-  const projectName = PROJECT_NAME_ALIASES.get(leafName.toLowerCase()) || leafName;
+  const projectKind = detectProjectKind(meta);
+  const projectName = projectKind === "projectless"
+    ? "普通对话"
+    : (cwd ? path.basename(path.resolve(cwd)) : "未知项目");
 
   return {
     sessionId,
@@ -139,6 +148,7 @@ export function createSession(meta, filePath, recordTimestamp) {
     cwd,
     projectKey: cwd ? path.resolve(cwd).replace(/\\/g, "/").toLowerCase() : "",
     projectName,
+    projectKind,
     threadSource,
     parentSessionId: parentSessionId(meta),
     title: "未命名会话",
@@ -599,6 +609,8 @@ function taskStatus(executionStatus) {
 export function taskSnapshot(session, turn) {
   if (!turn) return null;
   const status = taskStatus(turn.executionStatus);
+  const remoteRequest = parseRemoteRequest(turn.userText);
+  const question = remoteRequest?.request || turn.userText;
   return {
     taskId: `codex:${session.sessionId}:${turn.turnId}`,
     sessionId: session.sessionId,
@@ -608,6 +620,7 @@ export function taskSnapshot(session, turn) {
     sourceLabel: session.sourceLabel,
     sourceConfidence: session.sourceConfidence,
     projectName: session.projectName,
+    projectKind: session.projectKind,
     projectKey: session.projectKey,
     cwd: session.cwd,
     threadSource: session.threadSource,
@@ -615,8 +628,9 @@ export function taskSnapshot(session, turn) {
     // A lifecycle-only execution has no independent user request. Never reuse
     // the session's first title here: doing so makes internal executions look
     // like duplicate user questions in the task list.
-    title: turn.userText ? makeTitle(turn.userText) : "未命名任务",
-    question: turn.userText,
+    title: question ? makeTitle(question) : "未命名任务",
+    question,
+    requestOrigin: remoteRequest?.origin || "",
     latestResponse: turn.assistantFinal || turn.assistantPreview,
     status,
     canAcknowledge: ["completed", "failed", "interrupted", "unknown"].includes(status),
@@ -648,6 +662,7 @@ export function sessionSnapshot(session) {
     sourceConfidence: session.sourceConfidence,
     sourceRaw: session.sourceRaw,
     projectName: session.projectName,
+    projectKind: session.projectKind,
     projectKey: session.projectKey,
     cwd: session.cwd,
     threadSource: session.threadSource,

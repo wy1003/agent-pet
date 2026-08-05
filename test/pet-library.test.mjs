@@ -11,6 +11,11 @@ import {
   PetLibrary,
   validateGifPetFiles,
 } from "../desktop/pet/pet-library.mjs";
+import {
+  BUILTIN_PET,
+  builtinPetAssetPath,
+  builtinPetStateUrls,
+} from "../desktop/pet/builtin-pet.mjs";
 
 function gif(frames, width = 192, height = 208) {
   const header = Buffer.alloc(13);
@@ -40,6 +45,23 @@ function archive(id = "sample") {
   }
   return Buffer.from(zipSync(files));
 }
+
+test("built-in kitten provides every validated GIF state", async () => {
+  assert.deepEqual(Object.keys(BUILTIN_PET.states), Object.keys(GIF_PET_STATES));
+  assert.deepEqual(Object.keys(builtinPetStateUrls()), Object.keys(GIF_PET_STATES));
+  const assetDirectory = path.dirname(builtinPetAssetPath(BUILTIN_PET.states.idle));
+  const manifest = JSON.parse(await readFile(path.join(assetDirectory, "pet.json"), "utf8"));
+  assert.deepEqual(manifest.states, BUILTIN_PET.states);
+
+  for (const [state, expectedFrames] of Object.entries(GIF_PET_STATES)) {
+    const content = await readFile(builtinPetAssetPath(BUILTIN_PET.states[state]));
+    assert.deepEqual(inspectGif(content), {
+      width: 192,
+      height: 208,
+      frames: expectedFrames,
+    });
+  }
+});
 
 test("GIF pet archive validates the standard state files", () => {
   const zipped = archive();

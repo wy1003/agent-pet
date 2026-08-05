@@ -21,3 +21,6 @@ build/icon.ico
 # Local development planning and handoff notes
 TASKS.md
 HANDOFF.md
+
+# Local source art and visual QA artifacts
+art/

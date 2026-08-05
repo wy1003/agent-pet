@@ -83,6 +83,35 @@ test("a real terminal transition notifies once and uses the prepared phrase plan
   assert.equal(enqueued[0].text, "项目乙的任务：completed");
 });
 
+test("a remote-control turn does not enqueue a second remote completion", async () => {
+  const { orchestrator, remote, records } = fixture(() => preferences({
+    notifications: {
+      windows: { enabled: false },
+      voice: {
+        enabled: false,
+        engine: "windows",
+        contentLevel: "standard",
+        style: { addressee: "", assistantName: "", includeProjectName: true },
+      },
+      mobile: { enabled: true, provider: "weixin", contentLevel: "standard" },
+    },
+  }));
+  const running = {
+    taskId: "remote-turn-1",
+    status: "running",
+    requestOrigin: "agent-pet-remote",
+    question: "收到",
+  };
+  orchestrator.seed([running]);
+
+  await orchestrator.handleTask({ ...running, status: "completed", latestResponse: "收到。" });
+
+  assert.equal(remote.length, 0);
+  assert.equal(records.at(-1).remote, "skipped");
+  assert.equal(records.at(-1).result, "skipped");
+  assert.equal(records.at(-1).reason, "remote_control_reply_owned_by_controller");
+});
+
 test("quiet hours suppress normal completion but allow urgent failures", async () => {
   const quietPreferences = () => preferences({
     quietHours: { enabled: true, start: "22:00", end: "08:00", allowUrgent: true },

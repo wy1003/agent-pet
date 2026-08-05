@@ -1,5 +1,6 @@
 import { NOTIFICATION_EVENTS, PhraseComposer } from "./phrase-renderer.mjs";
 import { renderRemoteMessage } from "./remote-message-renderer.mjs";
+import { isRemoteRequestTask } from "../src/remote-request.mjs";
 
 const ACTIVE_STATUSES = new Set(["submitted", "queued", "running"]);
 const NOTIFICATION_EVENT_SET = new Set(NOTIFICATION_EVENTS);
@@ -40,6 +41,7 @@ export class NotificationOrchestrator {
     };
     this.showWindowsNotification = options.showWindowsNotification || (() => {});
     this.recordHistory = options.recordHistory || (async () => {});
+    this.resolveRemoteRoute = options.resolveRemoteRoute || (async () => null);
     this.composer = options.composer || new PhraseComposer();
     this.now = options.now || (() => new Date());
     this.logger = options.logger || console;
@@ -149,6 +151,8 @@ export class NotificationOrchestrator {
 
   async #dispatch(task, event, source) {
     const preferences = this.getPreferences();
+    const controllerOwnsRemoteReply = source === "task" && isRemoteRequestTask(task);
+    const remoteEnabled = preferences.notifications.mobile.enabled && !controllerOwnsRemoteReply;
     const createdAt = this.now().toISOString();
     let record = {
       id: `${source}:${Date.now()}:${Math.random().toString(36).slice(2, 9)}`,
@@ -164,7 +168,11 @@ export class NotificationOrchestrator {
       reason: "",
       windows: preferences.notifications.windows.enabled ? "pending" : "disabled",
       voice: preferences.notifications.voice.enabled ? "pending" : "disabled",
-      remote: preferences.notifications.mobile.enabled ? "pending" : "disabled",
+      remote: remoteEnabled
+        ? "pending"
+        : preferences.notifications.mobile.enabled
+          ? "skipped"
+          : "disabled",
       remoteProvider: preferences.notifications.mobile.provider || "weixin",
       remoteAttempts: 0,
     };
@@ -216,11 +224,13 @@ export class NotificationOrchestrator {
     if (voiceItem) record.voice = "queued";
 
     let remoteItem = null;
-    if (preferences.notifications.mobile.enabled) {
+    if (remoteEnabled) {
+      const remoteRoute = await this.resolveRemoteRoute(task);
       const remoteText = renderRemoteMessage(
         task,
         event,
         preferences.notifications.mobile.contentLevel,
+        remoteRoute,
       );
       remoteItem = {
         notificationId: record.id,
@@ -228,12 +238,21 @@ export class NotificationOrchestrator {
         event,
         text: remoteText,
         priority: PRIORITY[event] || 0,
+        channelId: record.remoteProvider,
+        projectCode: remoteRoute?.projectCode || "",
+        sessionCode: remoteRoute?.sessionCode || "",
+        sessionId: remoteRoute?.sessionId || task.sessionId || "",
+        projectKey: remoteRoute?.projectKey || task.projectKey || "",
       };
       record.remote = "queued";
     }
 
     if (record.windows === "disabled" && record.voice === "disabled" && record.remote === "disabled") {
       record.reason = "no_channels";
+    } else if (controllerOwnsRemoteReply
+      && record.windows === "disabled"
+      && record.voice === "disabled") {
+      record.reason = "remote_control_reply_owned_by_controller";
     }
     record.result = this.#resultFor(record);
     record = await this.#saveHistory(record);

@@ -1,7 +1,7 @@
 {
   "name": "agent-pet",
   "productName": "Agent Pet",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "main": "desktop/main.mjs",
   "type": "module",
@@ -41,6 +41,9 @@
     "appId": "io.github.wy1003.agentpet",
     "productName": "Agent Pet",
     "asar": true,
+    "asarUnpack": [
+      "node_modules/@openai/codex-win32-x64/**"
+    ],
     "directories": {
       "output": "dist",
       "buildResources": "build"

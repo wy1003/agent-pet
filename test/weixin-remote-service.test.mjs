@@ -75,7 +75,7 @@ test("remote service saves QR credentials, binds the first inbound context and s
     },
     sendText: async (value) => {
       sendCalls.push(value);
-      return { ok: true };
+      return { ok: true, clientId: value.clientId };
     },
   };
   const service = new WeixinRemoteService({
@@ -103,7 +103,9 @@ test("remote service saves QR credentials, binds the first inbound context and s
   assert.ok(saved.some((value) => value.contextUpdatedAt));
   assert.ok(statusEvents.some((value) => value.state === "waiting_bind"));
 
-  assert.deepEqual(await service.sendText("任务完成"), { ok: true });
+  assert.deepEqual(await service.sendText("任务完成", {
+    clientId: "provider-message-1",
+  }), { ok: true, clientId: "provider-message-1" });
   assert.ok(service.status().lastSendSuccessAt);
   assert.deepEqual(sendCalls[0], {
     botToken: "bot-token",
@@ -111,8 +113,183 @@ test("remote service saves QR credentials, binds the first inbound context and s
     toUserId: "scanner-user",
     contextToken: "context-1",
     text: "任务完成",
+    clientId: "provider-message-1",
     signal: undefined,
   });
+  await service.stop();
+});
+
+test("remote service marks the first bound text after process startup as restored", async () => {
+  const saved = [];
+  const inboundMessages = [];
+  let updateCalls = 0;
+  const quotedMessage = {
+    message_type: 1,
+    message_id: "inbound-1",
+    from_user_id: "bound-user",
+    context_token: "context-new",
+    item_list: [{
+      type: 1,
+      text_item: { text: "继续优化" },
+      ref_msg: {
+        message_item: {
+          msg_id: "outbound-1",
+          text_item: { text: "任务完成\n编号：P001/C0001" },
+        },
+      },
+    }],
+  };
+  const service = new WeixinRemoteService({
+    client: {
+      getUpdates: ({ signal }) => {
+        updateCalls += 1;
+        if (updateCalls === 1) {
+          return Promise.resolve({
+            ret: 0,
+            get_updates_buf: "cursor-new",
+            msgs: [quotedMessage],
+          });
+        }
+        return waitUntilAbort(signal);
+      },
+    },
+    loadCredentials: async () => ({
+      botToken: "token",
+      accountId: "account",
+      baseUrl: "https://edge.weixin.example",
+      userId: "bound-user",
+      contextToken: "context-old",
+      getUpdatesBuf: "cursor-old",
+    }),
+    saveCredentials: async (value) => saved.push(value),
+    onInbound: async (message, metadata) => inboundMessages.push({ message, metadata }),
+    logger: { warn() {} },
+  });
+
+  await service.start();
+  await waitFor(() => inboundMessages.length === 1);
+  await waitFor(() => saved.some((value) => value.getUpdatesBuf === "cursor-new"));
+  assert.equal(service.isBoundUser("bound-user"), true);
+  assert.equal(service.isBoundUser("other-user"), false);
+  assert.equal(inboundMessages[0].message, quotedMessage);
+  assert.deepEqual(inboundMessages[0].metadata, { connectionEvent: "restored" });
+  assert.equal("agent_pet_connection_event" in quotedMessage, false);
+  const contextSaveIndex = saved.findIndex((value) => (
+    value.contextToken === "context-new" && value.getUpdatesBuf === "cursor-old"
+  ));
+  const cursorSaveIndex = saved.findIndex((value) => value.getUpdatesBuf === "cursor-new");
+  assert.ok(contextSaveIndex >= 0);
+  assert.ok(cursorSaveIndex > contextSaveIndex);
+  await service.stop();
+});
+
+test("remote service dispatches the first binding text as connected and filters other users and groups", async () => {
+  const saved = [];
+  const inboundMessages = [];
+  let updateCalls = 0;
+  const service = new WeixinRemoteService({
+    client: {
+      getUpdates: ({ signal }) => {
+        updateCalls += 1;
+        if (updateCalls === 1) {
+          return Promise.resolve({
+            ret: 0,
+            get_updates_buf: "cursor-1",
+            msgs: [{
+              message_type: 1,
+              message_id: "binding-message",
+              from_user_id: "scanner-user",
+              context_token: "context-1",
+              item_list: [{ type: 1, text_item: { text: "绑定" } }],
+            }, {
+              message_type: 1,
+              message_id: "other-message",
+              from_user_id: "other-user",
+              context_token: "other-context",
+              item_list: [{ type: 1, text_item: { text: "不应处理" } }],
+            }, {
+              message_type: 1,
+              message_id: "group-message",
+              from_user_id: "scanner-user",
+              group_id: "group-1",
+              context_token: "group-context",
+              item_list: [{ type: 1, text_item: { text: "群消息" } }],
+            }],
+          });
+        }
+        return waitUntilAbort(signal);
+      },
+    },
+    loadCredentials: async () => ({
+      botToken: "token",
+      accountId: "account",
+      baseUrl: "https://edge.weixin.example",
+      scannerUserId: "scanner-user",
+    }),
+    saveCredentials: async (value) => saved.push(value),
+    onInbound: async (message, metadata) => inboundMessages.push({ message, metadata }),
+    logger: { warn() {} },
+  });
+
+  await service.start();
+  await waitFor(() => saved.some((value) => value.getUpdatesBuf === "cursor-1"));
+  assert.equal(service.isBoundUser("scanner-user"), true);
+  assert.equal(inboundMessages.length, 1);
+  assert.equal(inboundMessages[0].message.message_id, "binding-message");
+  assert.deepEqual(inboundMessages[0].metadata, { connectionEvent: "connected" });
+  assert.equal(saved.some((value) => value.contextToken === "other-context"), false);
+  assert.equal(saved.some((value) => value.contextToken === "group-context"), false);
+  await service.stop();
+});
+
+test("remote service retries an inbound batch without advancing its cursor when dispatch fails", async () => {
+  const saved = [];
+  const requestedCursors = [];
+  let inboundCalls = 0;
+  const service = new WeixinRemoteService({
+    client: {
+      getUpdates: async (options) => {
+        requestedCursors.push(options.getUpdatesBuf);
+        return {
+          ret: 0,
+          get_updates_buf: "cursor-new",
+          msgs: [{
+            message_type: 1,
+            message_id: "retry-message",
+            from_user_id: "bound-user",
+            context_token: "context-new",
+            item_list: [{ type: 1, text_item: { text: "只交给上层处理" } }],
+          }],
+        };
+      },
+    },
+    loadCredentials: async () => ({
+      botToken: "token",
+      accountId: "account",
+      baseUrl: "https://edge.weixin.example",
+      userId: "bound-user",
+      contextToken: "context-old",
+      getUpdatesBuf: "cursor-old",
+    }),
+    saveCredentials: async (value) => saved.push(value),
+    onInbound: async () => {
+      inboundCalls += 1;
+      throw new Error("controller unavailable");
+    },
+    logger: { warn() {} },
+    retryMs: 10,
+    retryMaxMs: 10,
+  });
+
+  await service.start();
+  await waitFor(() => inboundCalls >= 2);
+  assert.ok(requestedCursors.length >= 2);
+  assert.ok(requestedCursors.every((value) => value === "cursor-old"));
+  assert.ok(saved.some((value) => (
+    value.contextToken === "context-new" && value.getUpdatesBuf === "cursor-old"
+  )));
+  assert.equal(saved.some((value) => value.getUpdatesBuf === "cursor-new"), false);
+  assert.equal(JSON.stringify(saved).includes("只交给上层处理"), false);
   await service.stop();
 });
 
@@ -121,6 +298,7 @@ test("remote service exposes send degradation and clears it after a fresh inboun
   const inboundGate = new Promise((resolve) => { releaseInbound = resolve; });
   let updateCalls = 0;
   const saved = [];
+  const inboundMessages = [];
   const client = {
     notifyStart: async () => ({ ok: true }),
     notifyStop: async () => ({ ok: true }),
@@ -133,8 +311,10 @@ test("remote service exposes send degradation and clears it after a fresh inboun
           get_updates_buf: "cursor-2",
           msgs: [{
             message_type: 1,
+            message_id: "context-restored-message",
             from_user_id: "user",
             context_token: "context-2",
+            item_list: [{ type: 1, text_item: { text: "恢复连接" } }],
           }],
         };
       }
@@ -161,22 +341,65 @@ test("remote service exposes send degradation and clears it after a fresh inboun
       contextToken: "context-1",
     }),
     saveCredentials: async (value) => saved.push(value),
+    onInbound: async (message, metadata) => inboundMessages.push({ message, metadata }),
     logger: { warn() {} },
   });
 
   await service.start();
   await waitFor(() => service.status().state === "connected");
-  await assert.rejects(() => service.sendText("任务完成"), (error) => error?.code === -2);
-  assert.equal(service.status().deliveryState, "degraded");
+  await assert.rejects(
+    () => service.sendText("任务完成"),
+    (error) => error?.code === "reply_context_invalid" && error?.transient === false,
+  );
+  assert.equal(service.status().deliveryState, "reply_context_invalid");
   assert.equal(service.status().sendAvailable, false);
-  assert.match(service.status().lastSendError, /-2/);
-  assert.match(service.status().lastSendError, /刷新连接/);
+  assert.equal(service.status().replyContextInvalid, true);
+  assert.match(service.status().lastSendError, /长时间未与 Agent Pet 对话/);
+  assert.match(service.status().lastSendError, /无需重新扫码/);
 
   releaseInbound();
   await waitFor(() => service.status().deliveryState === "ready");
+  await waitFor(() => inboundMessages.length === 1);
   assert.equal(service.status().sendAvailable, true);
   assert.equal(service.status().lastSendError, "");
   assert.ok(saved.some((value) => value.contextToken === "context-2" && value.contextUpdatedAt));
+  assert.equal(inboundMessages[0].message.message_id, "context-restored-message");
+  assert.deepEqual(inboundMessages[0].metadata, { connectionEvent: "restored" });
+  assert.equal("agent_pet_connection_event" in inboundMessages[0].message, false);
+  await service.stop();
+});
+
+test("remote service lets Tencent decide context validity instead of assuming a fixed timeout", async () => {
+  const now = Date.parse("2026-08-04T10:00:00.000Z");
+  let sendCalls = 0;
+  const service = new WeixinRemoteService({
+    client: {
+      notifyStart: async () => ({ ok: true }),
+      notifyStop: async () => ({ ok: true }),
+      getUpdates: ({ signal }) => waitUntilAbort(signal),
+      sendText: async () => {
+        sendCalls += 1;
+        return { ok: true };
+      },
+    },
+    loadCredentials: async () => ({
+      botToken: "token",
+      accountId: "account",
+      baseUrl: "https://edge.weixin.example",
+      userId: "user",
+      contextToken: "context",
+      contextUpdatedAt: "2026-08-03T09:59:59.000Z",
+    }),
+    now: () => now,
+    logger: { warn() {} },
+  });
+
+  await service.start();
+  await waitFor(() => service.status().state === "connected");
+  assert.equal(service.status().deliveryState, "ready");
+  assert.equal(service.status().replyContextInvalid, false);
+  assert.deepEqual(await service.sendText("任务完成"), { ok: true });
+  assert.equal(sendCalls, 1);
   await service.stop();
 });
 

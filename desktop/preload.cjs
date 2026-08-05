@@ -47,6 +47,15 @@ contextBridge.exposeInMainWorld("companion", {
   submitWeixinVerificationCode: (code) => ipcRenderer.invoke("weixin:verify", code),
   disconnectWeixin: () => ipcRenderer.invoke("weixin:disconnect"),
   testWeixinNotification: () => ipcRenderer.invoke("weixin:test"),
+  getRemoteControlSettings: () => ipcRenderer.invoke("remote-control:get"),
+  updateRemoteControlSettings: (value) => (
+    ipcRenderer.invoke("remote-control:update", value)
+  ),
+  onRemoteControlSettings: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on("remote-control:changed", listener);
+    return () => ipcRenderer.removeListener("remote-control:changed", listener);
+  },
   onWeixinStatus: (callback) => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on("weixin:status-changed", listener);

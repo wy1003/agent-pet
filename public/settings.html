@@ -397,7 +397,44 @@
                 <button id="weixin-disconnect" class="text-button danger-text" type="button" hidden>解除绑定</button>
               </div>
               <p id="weixin-action-result" class="integration-result" role="status"></p>
+              <aside class="integration-notice" aria-label="微信通知限制说明">
+                <span class="integration-notice-icon" aria-hidden="true">!</span>
+                <span>
+                  <strong>长时间未互动可能暂停通知</strong>
+                  <small>如果长时间未向 Agent Pet 发送消息，微信任务通知可能暂停。请在微信中向 Agent Pet 发送任意消息即可恢复，无需重新扫码。</small>
+                </span>
+              </aside>
             </article>
+          </section>
+
+          <section id="remote-control" class="remote-control-card" data-state="unavailable" aria-labelledby="remote-control-title">
+            <div class="remote-control-heading">
+              <span>
+                <strong id="remote-control-title">指令操作</strong>
+                <small>开启后，任一已连接且受信任的远程服务都可使用同一套指令操作本机已识别的项目。此设置对所有渠道生效，默认关闭。</small>
+              </span>
+              <label class="compact-toggle remote-control-toggle">
+                <input id="remote-control-enabled" type="checkbox" disabled />
+                允许
+              </label>
+            </div>
+            <p id="remote-control-status" class="remote-control-status" role="status">当前版本尚未启用指令操作后端，功能保持关闭。</p>
+            <details id="remote-command-help" class="remote-command-help">
+              <summary>查看指令帮助</summary>
+              <div class="remote-command-help-body">
+                <p>所有已连接且受信任的远程服务共用下列指令。只有以 <code>/</code> 开头的消息会执行任务；首次连接或恢复时会返回简短引导，发送“帮助”可查看完整指令。</p>
+                <ul class="remote-command-list">
+                  <li><code>/help</code><span>查看指令帮助</span></li>
+                  <li><code>/projects</code><span>查看已识别项目及项目指令</span></li>
+                  <li><code>/sessions [P001]</code><span>查看全部或指定项目的最近会话</span></li>
+                  <li><code>/P001 新任务：要求</code><span>在指定项目创建任务</span></li>
+                  <li><code>/S0001 要求</code><span>继续指定会话</span></li>
+                  <li><code>/S0001 状态</code><span>查询会话状态</span></li>
+                  <li><code>/S0001 停止</code><span>停止远程任务</span></li>
+                  <li><code>/S0001 重试</code><span>恢复回复超时或中断的请求</span></li>
+                </ul>
+              </div>
+            </details>
           </section>
 
           <section class="remote-content-settings" aria-labelledby="remote-content-title">
@@ -411,8 +448,8 @@
               <span>内容等级</span>
               <select data-path="notifications.mobile.contentLevel">
                 <option value="brief">简短：只发送任务状态</option>
-                <option value="standard">标准：项目、任务标题和状态</option>
-                <option value="detailed">详细：包含最终回复摘要</option>
+                <option value="standard">标准：项目、任务和精简结果</option>
+                <option value="detailed">详细：包含较长结果摘要</option>
               </select>
             </label>
           </section>
@@ -454,7 +491,7 @@
             <label class="field pet-library-select-field">
               <span>当前宠物</span>
               <select id="pet-library-select" aria-describedby="pet-library-status">
-                <option value="builtin-default">内置默认宠物</option>
+                <option value="builtin-default">小团（内置默认）</option>
               </select>
             </label>
             <div id="pet-zip-drop" class="pet-zip-drop" tabindex="0" role="button" aria-label="拖入或选择宠物 ZIP 压缩包">

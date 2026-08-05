@@ -74,6 +74,9 @@ const weixinReconnectButton = document.querySelector("#weixin-reconnect");
 const weixinTestButton = document.querySelector("#weixin-test");
 const weixinDisconnectButton = document.querySelector("#weixin-disconnect");
 const weixinActionResult = document.querySelector("#weixin-action-result");
+const remoteControlCard = document.querySelector("#remote-control");
+const remoteControlEnabled = document.querySelector("#remote-control-enabled");
+const remoteControlStatus = document.querySelector("#remote-control-status");
 const weixinConnectDialog = document.querySelector("#weixin-connect-dialog");
 const closeWeixinDialogButton = document.querySelector("#close-weixin-dialog");
 const dismissWeixinDialogButton = document.querySelector("#dismiss-weixin-dialog");
@@ -123,7 +126,13 @@ let weixinState = {
   accountLabel: "",
 };
 let weixinActionBusy = false;
+let remoteControlState = {
+  available: false,
+  enabled: false,
+  busy: false,
+};
 let removeWeixinStatusListener = null;
+let removeRemoteControlListener = null;
 let removeAppUpdateStatusListener = null;
 let appUpdateState = { state: "unavailable", currentVersion: "" };
 
@@ -148,7 +157,7 @@ function renderPetLibrary(state) {
   managedPetState = state || { rootPath: "", selectedPetId: "builtin-default", pets: [] };
   const builtin = document.createElement("option");
   builtin.value = "builtin-default";
-  builtin.textContent = "内置默认宠物";
+  builtin.textContent = "小团（内置默认）";
   const options = (managedPetState.pets || []).map((pet) => {
     const option = document.createElement("option");
     option.value = pet.id;
@@ -551,9 +560,15 @@ function normalizeWeixinStatus(result) {
   let connected = Boolean(source.connected);
   const bound = Boolean(source.bound);
   const deliveryState = String(source.deliveryState || "");
+  const replyContextInvalid = Boolean(source.replyContextInvalid)
+    || deliveryState === "reply_context_invalid";
   if (!bound) connected = false;
   if (state === "connected" && !(connected && bound)) state = "waiting_bind";
-  if (connected && bound) state = deliveryState === "degraded" ? "degraded" : "connected";
+  if (connected && bound) {
+    state = ["degraded", "reply_context_invalid"].includes(deliveryState)
+      ? "degraded"
+      : "connected";
+  }
   return {
     state,
     connected,
@@ -564,6 +579,7 @@ function normalizeWeixinStatus(result) {
     lastError: String(source.lastError || source.error || ""),
     lastSendError: String(source.lastSendError || ""),
     contextUpdatedAt: String(source.contextUpdatedAt || ""),
+    replyContextInvalid,
     accountLabel: String(source.accountLabel || ""),
   };
 }
@@ -574,6 +590,97 @@ function hasWeixinConnectionApi() {
     && window.companion?.startWeixinConnection
     && window.companion?.disconnectWeixin,
   );
+}
+
+function hasRemoteControlApi() {
+  return Boolean(
+    window.companion?.getRemoteControlSettings
+    && window.companion?.updateRemoteControlSettings,
+  );
+}
+
+function normalizeRemoteControlSettings(value = {}) {
+  const source = value?.remoteControl && typeof value.remoteControl === "object"
+    ? value.remoteControl
+    : (value?.settings?.remoteControl && typeof value.settings.remoteControl === "object"
+      ? value.settings.remoteControl
+      : (value?.settings && typeof value.settings === "object" ? value.settings : value));
+  return {
+    available: hasRemoteControlApi() && value?.available !== false,
+    enabled: Boolean(source?.enabled),
+    busy: false,
+  };
+}
+
+function renderRemoteControlSettings(state, message = "", messageState = "") {
+  remoteControlState = state;
+  const unavailable = !state.available;
+  remoteControlCard.dataset.state = unavailable
+    ? "unavailable"
+    : (state.enabled ? "enabled" : "disabled");
+  remoteControlEnabled.checked = !unavailable && state.enabled;
+  remoteControlEnabled.disabled = unavailable || state.busy;
+
+  let status = message;
+  let statusState = messageState;
+  if (!status && unavailable) {
+    status = "指令操作后端不可用，功能已按安全默认值关闭。";
+    statusState = "error";
+  } else if (!status && state.enabled) {
+    status = "指令操作已开启。所有已连接且受信任的远程服务可使用同一套指令。";
+    statusState = "success";
+  } else if (!status) {
+    status = "指令操作已关闭。普通消息仍可用于刷新远程连接。";
+  }
+  remoteControlStatus.dataset.state = statusState;
+  remoteControlStatus.textContent = status;
+}
+
+async function loadRemoteControlSettings() {
+  if (!hasRemoteControlApi()) {
+    renderRemoteControlSettings(normalizeRemoteControlSettings());
+    return;
+  }
+  try {
+    renderRemoteControlSettings(normalizeRemoteControlSettings(
+      await window.companion.getRemoteControlSettings(),
+    ));
+  } catch (error) {
+    console.error("Unable to load remote control settings", error);
+    renderRemoteControlSettings(
+      normalizeRemoteControlSettings(),
+      `无法读取指令操作设置，功能保持关闭：${error.message || "未知错误"}`,
+      "error",
+    );
+  }
+}
+
+async function saveRemoteControlSettings(next) {
+  if (!hasRemoteControlApi() || remoteControlState.busy) return;
+  const previous = remoteControlState;
+  const pending = {
+    ...previous,
+    enabled: Boolean(next.enabled),
+    busy: true,
+  };
+  renderRemoteControlSettings(pending, "正在保存指令操作设置…");
+  try {
+    const result = await window.companion.updateRemoteControlSettings({
+      enabled: pending.enabled,
+    });
+    renderRemoteControlSettings(
+      normalizeRemoteControlSettings(result),
+      "指令操作设置已保存。",
+      "success",
+    );
+  } catch (error) {
+    console.error("Unable to save remote control settings", error);
+    renderRemoteControlSettings(
+      { ...previous, busy: false },
+      `保存失败，设置未更改：${error.message || "未知错误"}`,
+      "error",
+    );
+  }
 }
 
 function setWeixinActionResult(state, message) {
@@ -648,7 +755,12 @@ function renderWeixinDialog(status) {
 
 function renderWeixinStatus(result) {
   weixinState = normalizeWeixinStatus(result);
-  const { state, accountLabel, lastError } = weixinState;
+  const {
+    state,
+    accountLabel,
+    lastError,
+    replyContextInvalid,
+  } = weixinState;
   const labels = {
     reconnecting: "正在重连",
     disconnected: "未连接",
@@ -657,7 +769,7 @@ function renderWeixinStatus(result) {
     verification_required: "等待验证",
     waiting_bind: "等待绑定",
     connected: "已连接",
-    degraded: "发送异常",
+    degraded: replyContextInvalid ? "待微信消息" : "发送异常",
     error: "连接异常",
   };
   const descriptions = {
@@ -668,7 +780,9 @@ function renderWeixinStatus(result) {
     verification_required: "微信要求额外验证，请输入手机微信中显示的验证码。",
     waiting_bind: "扫码已确认，请在微信中向 Agent Pet 发送任意一条消息。",
     connected: "已收到绑定消息，任务通知可以发送到该微信。",
-    degraded: weixinState.lastSendError || "微信接收连接在线，但最近一次通知发送失败。",
+    degraded: replyContextInvalid
+      ? "微信回复状态暂时失效，请在微信中向 Agent Pet 发送任意消息恢复任务通知。"
+      : (weixinState.lastSendError || "微信接收连接在线，但最近一次通知发送失败。"),
     error: lastError || "连接发生异常，请重新连接。",
   };
 
@@ -685,13 +799,17 @@ function renderWeixinStatus(result) {
   const apiAvailable = hasWeixinConnectionApi();
   weixinConnectButton.hidden = state !== "disconnected";
   weixinContinueButton.hidden = !active;
-  weixinReconnectButton.hidden = !(["connected", "degraded", "reconnecting", "error"].includes(state));
+  weixinReconnectButton.hidden = replyContextInvalid
+    || !(["connected", "degraded", "reconnecting", "error"].includes(state));
   weixinDisconnectButton.hidden = state === "disconnected";
   weixinConnectButton.disabled = weixinActionBusy || !apiAvailable;
   weixinContinueButton.disabled = weixinActionBusy;
   weixinReconnectButton.disabled = weixinActionBusy || !apiAvailable;
   weixinDisconnectButton.disabled = weixinActionBusy || !apiAvailable;
-  weixinTestButton.disabled = weixinActionBusy || !ready || !window.companion?.testWeixinNotification;
+  weixinTestButton.disabled = weixinActionBusy
+    || !ready
+    || replyContextInvalid
+    || !window.companion?.testWeixinNotification;
 
   if (!apiAvailable) {
     weixinServiceCard.dataset.state = "error";
@@ -744,6 +862,14 @@ function subscribeWeixinStatus() {
     renderWeixinStatus(status);
   });
   if (typeof removeListener === "function") removeWeixinStatusListener = removeListener;
+}
+
+function subscribeRemoteControlSettings() {
+  if (!window.companion?.onRemoteControlSettings || removeRemoteControlListener) return;
+  const removeListener = window.companion.onRemoteControlSettings((value) => {
+    renderRemoteControlSettings(normalizeRemoteControlSettings(value));
+  });
+  if (typeof removeListener === "function") removeRemoteControlListener = removeListener;
 }
 
 function renderAppUpdateStatus(value = {}) {
@@ -808,6 +934,7 @@ async function initialize() {
 
   try {
     subscribeWeixinStatus();
+    subscribeRemoteControlSettings();
     subscribeAppUpdateStatus();
     render(await window.companion.getSettings());
     await Promise.all([
@@ -818,6 +945,7 @@ async function initialize() {
       refreshGptSovitsServiceStatus(),
       refreshGptSovitsRuntimeOptions(),
       refreshWeixinStatus(),
+      loadRemoteControlSettings(),
       loadAppUpdateStatus(),
     ]);
     setStatus("saved", "已保存");
@@ -950,6 +1078,12 @@ weixinTestButton.addEventListener("click", async () => {
   } finally {
     setWeixinBusy(false);
   }
+});
+
+remoteControlEnabled.addEventListener("change", () => {
+  saveRemoteControlSettings({
+    enabled: remoteControlEnabled.checked,
+  });
 });
 
 weixinVerificationForm.addEventListener("submit", async (event) => {
@@ -1445,6 +1579,7 @@ resetButton.addEventListener("click", async () => {
     saveVoiceStyleButton.disabled = true;
     render(state);
     await loadPetLibrary();
+    await loadRemoteControlSettings();
     setStatus("saved", "已恢复");
   } catch (error) {
     console.error("Unable to reset settings", error);

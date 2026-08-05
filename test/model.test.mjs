@@ -11,6 +11,7 @@ import {
   sessionTaskSnapshots,
   sessionSnapshot,
 } from "../src/model.mjs";
+import { buildRemoteRequest, REMOTE_REQUEST_ORIGIN } from "../src/remote-request.mjs";
 
 const meta = {
   session_id: "session-1",
@@ -82,7 +83,7 @@ test("reduces CC GUI content and lifecycle into a session snapshot", () => {
   assert.equal(snapshot.status.unread, false);
 });
 
-test("legacy and repository folder names use the Agent Pet display brand", () => {
+test("project names preserve their Codex working-directory names", () => {
   const legacy = createSession(
     { id: "legacy-brand", cwd: "D:\\project\\CodexActivityCompanion" },
     "rollout.jsonl",
@@ -93,8 +94,27 @@ test("legacy and repository folder names use the Agent Pet display brand", () =>
     "rollout.jsonl",
     "2026-08-03T00:00:00.000Z",
   );
-  assert.equal(legacy.projectName, "Agent Pet");
-  assert.equal(repository.projectName, "Agent Pet");
+  assert.equal(legacy.projectName, "CodexActivityCompanion");
+  assert.equal(repository.projectName, "agent-pet");
+});
+
+test("Codex projectless chats are identified as ordinary conversations", () => {
+  const session = createSession(
+    {
+      id: "projectless-chat",
+      cwd: "C:\\Users\\tester\\Documents\\Codex\\2026-08-04\\1-1",
+      base_instructions: {
+        text: "# Runtime\n\n### Projectless Chat\n\nThis thread uses a generated directory.",
+      },
+    },
+    "rollout.jsonl",
+    "2026-08-04T00:00:00.000Z",
+  );
+
+  const snapshot = sessionSnapshot(session);
+  assert.equal(snapshot.projectKind, "projectless");
+  assert.equal(snapshot.projectName, "普通对话");
+  assert.match(snapshot.projectKey, /documents\/codex\/2026-08-04\/1-1$/);
 });
 
 test("task_complete with an embedded error is classified as failed", () => {
@@ -478,4 +498,23 @@ test("stale detection is applied to every unfinished task, not only the latest t
   );
   tasks = sessionTaskSnapshots(session);
   assert.equal(tasks.find((task) => task.turnId === "turn-current").status, "unknown");
+});
+
+test("remote request snapshots expose the real request and retain their turn origin", () => {
+  const session = createSession(meta, "session.jsonl", meta.timestamp);
+  applyRecord(session, event("event_msg", { type: "task_started", turn_id: "turn-remote" }));
+  applyRecord(session, event("event_msg", {
+    type: "user_message",
+    message: buildRemoteRequest("收到"),
+  }));
+  applyRecord(session, event("event_msg", {
+    type: "task_complete",
+    turn_id: "turn-remote",
+    last_agent_message: "收到。",
+  }));
+
+  const task = sessionTaskSnapshots(session)[0];
+  assert.equal(task.title, "收到");
+  assert.equal(task.question, "收到");
+  assert.equal(task.requestOrigin, REMOTE_REQUEST_ORIGIN);
 });
