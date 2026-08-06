@@ -425,19 +425,26 @@ function installDisplayHandlers() {
   screen.on("display-metrics-changed", restoreVisibility);
 }
 
+function availablePetStates(pet = selectedPet || BUILTIN_PET) {
+  return pet.format === "state-gifs" ? Object.keys(pet.states) : null;
+}
+
 function petStatePayload(state = petStateController?.snapshot()) {
   const preferences = preferenceStore?.get()?.appearance?.pet || {};
   const pet = selectedPet || BUILTIN_PET;
-  const availableStates = pet.format === "state-gifs"
-    ? Object.keys(pet.states)
-    : null;
+  const availableStates = availablePetStates(pet);
   const requestedState = state || { state: "idle", generation: 0, oneShot: false, count: 0 };
-  const stateUrls = pet.id === BUILTIN_PET_ID
-    ? builtinPetStateUrls()
-    : Object.fromEntries(Object.entries(pet.states).map(([name, fileName]) => [
-      name,
-      `pet-asset://library/${encodeURIComponent(pet.id)}/${encodeURIComponent(fileName)}`,
-    ]));
+  const stateUrls = pet.format !== "state-gifs"
+    ? {}
+    : pet.id === BUILTIN_PET_ID
+      ? builtinPetStateUrls()
+      : Object.fromEntries(Object.entries(pet.states).map(([name, fileName]) => [
+        name,
+        `pet-asset://library/${encodeURIComponent(pet.id)}/${encodeURIComponent(fileName)}`,
+      ]));
+  const spriteUrl = pet.format === "spritesheet"
+    ? `pet-asset://library/${encodeURIComponent(pet.id)}/${encodeURIComponent(pet.spritesheetPath)}`
+    : "";
   return {
     ...requestedState,
     state: resolveAvailablePetState(requestedState.state, availableStates),
@@ -445,9 +452,9 @@ function petStatePayload(state = petStateController?.snapshot()) {
     pet: {
       id: pet.id,
       format: pet.format,
-      spriteUrl: "",
+      spriteUrl,
       stateUrls,
-      spriteVersionNumber: 2,
+      spriteVersionNumber: pet.spriteVersionNumber || 1,
       width: preferences.width || 112,
       renderMode: preferences.renderMode || "smooth",
       reducedMotion: preferences.reducedMotion || "system",
@@ -481,9 +488,7 @@ function sendPetState(state = petStateController?.snapshot(), overrideState = ""
   const payload = petStatePayload(state);
   if (overrideState) {
     const pet = selectedPet || BUILTIN_PET;
-    const availableStates = pet.format === "state-gifs"
-      ? Object.keys(pet.states)
-      : null;
+    const availableStates = availablePetStates(pet);
     payload.state = resolveAvailablePetState(overrideState, availableStates);
   }
   badgeWindow.webContents.send("pet:state", payload);
@@ -1081,7 +1086,7 @@ function createNotificationServices() {
     recordHistory: (record) => notificationHistory.append(record),
   });
   petStateController = new PetStateController({
-    availableStates: Object.keys((selectedPet || BUILTIN_PET).states),
+    availableStates: availablePetStates(),
     onState: (state) => sendPetState(state),
   });
   sendPetState(petStateController.snapshot());
@@ -1143,10 +1148,15 @@ function installPetAssetProtocol() {
         return new Response("Not found", { status: 404 });
       }
       const content = await readFile(assetPath);
+      const contentTypes = {
+        ".gif": "image/gif",
+        ".png": "image/png",
+        ".webp": "image/webp",
+      };
       return new Response(content, {
         status: 200,
         headers: {
-          "Content-Type": "image/gif",
+          "Content-Type": contentTypes[path.extname(assetPath).toLowerCase()] || "application/octet-stream",
           "Cache-Control": "no-store",
           "X-Content-Type-Options": "nosniff",
         },
@@ -1763,7 +1773,7 @@ function installIpcHandlers() {
   ipcMain.handle("pet-library:select-zip", async (event) => {
     requireTrustedSender(event);
     const result = await dialog.showOpenDialog(settingsWindow || BrowserWindow.getFocusedWindow(), {
-      title: "选择宠物 GIF 压缩包",
+      title: "选择宠物 ZIP 压缩包",
       filters: [{ name: "宠物压缩包", extensions: ["zip"] }],
       properties: ["openFile"],
     });
@@ -1773,7 +1783,7 @@ function installIpcHandlers() {
     requireTrustedSender(event);
     const pet = await petLibrary.importZip(zipPath);
     selectedPet = pet;
-    petStateController?.setAvailableStates(Object.keys(pet.states));
+    petStateController?.setAvailableStates(availablePetStates(pet));
     const preferences = await preferenceStore.update({
       appearance: { pet: { selectedPetId: pet.id } },
     });
@@ -1785,9 +1795,7 @@ function installIpcHandlers() {
     requireTrustedSender(event);
     const id = String(value || "");
     selectedPet = id === "builtin-default" ? null : await petLibrary.get(id);
-    petStateController?.setAvailableStates(
-      Object.keys((selectedPet || BUILTIN_PET).states),
-    );
+    petStateController?.setAvailableStates(availablePetStates());
     const preferences = await preferenceStore.update({
       appearance: { pet: { selectedPetId: selectedPet?.id || "builtin-default" } },
     });

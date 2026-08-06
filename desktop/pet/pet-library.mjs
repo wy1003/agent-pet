@@ -17,6 +17,13 @@ const MAX_UNCOMPRESSED_BYTES = 64 * 1024 * 1024;
 const MAX_ENTRY_BYTES = 12 * 1024 * 1024;
 const MAX_ENTRIES = 64;
 
+export const SPRITE_PET_CONTRACTS = Object.freeze({
+  1: Object.freeze({ columns: 8, rows: 9, width: 1536, height: 1872 }),
+  2: Object.freeze({ columns: 8, rows: 11, width: 1536, height: 2288 }),
+});
+
+const SPRITE_IMAGE_EXTENSIONS = new Set([".png", ".webp"]);
+
 export const GIF_PET_STATES = Object.freeze({
   idle: 6,
   "running-right": 8,
@@ -161,6 +168,73 @@ export function inspectGif(bytes) {
   return { width, height, frames };
 }
 
+function inspectPng(buffer) {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (buffer.length < 33 || !buffer.subarray(0, 8).equals(signature)
+    || buffer.subarray(12, 16).toString("ascii") !== "IHDR") {
+    throw petError("invalid_sprite_image", "精灵表不是有效的 PNG 图片");
+  }
+  const width = buffer.readUInt32BE(16);
+  const height = buffer.readUInt32BE(20);
+  const colorType = buffer[25];
+  let hasAlpha = colorType === 4 || colorType === 6;
+  let offset = 8;
+  while (!hasAlpha && offset + 12 <= buffer.length) {
+    const size = buffer.readUInt32BE(offset);
+    const type = buffer.subarray(offset + 4, offset + 8).toString("ascii");
+    const next = offset + 12 + size;
+    if (next > buffer.length) throw petError("invalid_sprite_image", "PNG 数据块不完整");
+    if (type === "tRNS") hasAlpha = true;
+    if (type === "IEND") break;
+    offset = next;
+  }
+  return { format: "png", width, height, hasAlpha };
+}
+
+function inspectWebp(buffer) {
+  if (buffer.length < 20 || buffer.subarray(0, 4).toString("ascii") !== "RIFF"
+    || buffer.subarray(8, 12).toString("ascii") !== "WEBP") {
+    throw petError("invalid_sprite_image", "精灵表不是有效的 WebP 图片");
+  }
+  let width = 0;
+  let height = 0;
+  let hasAlpha = false;
+  let offset = 12;
+  while (offset + 8 <= buffer.length) {
+    const type = buffer.subarray(offset, offset + 4).toString("ascii");
+    const size = buffer.readUInt32LE(offset + 4);
+    const start = offset + 8;
+    const end = start + size;
+    if (end > buffer.length) throw petError("invalid_sprite_image", "WebP 数据块不完整");
+    if (type === "ALPH") hasAlpha = true;
+    if (type === "VP8X" && size >= 10) {
+      hasAlpha ||= Boolean(buffer[start] & 0x10);
+      width = 1 + buffer.readUIntLE(start + 4, 3);
+      height = 1 + buffer.readUIntLE(start + 7, 3);
+    } else if (type === "VP8L" && size >= 5 && buffer[start] === 0x2f) {
+      const bits = buffer.readUInt32LE(start + 1);
+      width = 1 + (bits & 0x3fff);
+      height = 1 + ((bits >>> 14) & 0x3fff);
+      hasAlpha ||= Boolean((bits >>> 28) & 1);
+    } else if (type === "VP8 " && size >= 10
+      && buffer[start + 3] === 0x9d && buffer[start + 4] === 0x01 && buffer[start + 5] === 0x2a) {
+      width = buffer.readUInt16LE(start + 6) & 0x3fff;
+      height = buffer.readUInt16LE(start + 8) & 0x3fff;
+    }
+    offset = end + (size % 2);
+  }
+  if (!width || !height) throw petError("invalid_sprite_image", "无法读取 WebP 精灵表尺寸");
+  return { format: "webp", width, height, hasAlpha };
+}
+
+export function inspectSpriteImage(bytes, fileName = "") {
+  const buffer = Buffer.from(bytes);
+  const extension = path.extname(String(fileName || "")).toLowerCase();
+  if (extension === ".png") return inspectPng(buffer);
+  if (extension === ".webp") return inspectWebp(buffer);
+  throw petError("unsupported_sprite_image", "精灵表只支持 PNG 或 WebP");
+}
+
 function normalizedArchiveFiles(unzipped) {
   const files = Object.entries(unzipped)
     .map(([name, bytes]) => ({ name: name.replaceAll("\\", "/"), bytes }))
@@ -207,6 +281,65 @@ export function validateGifPetFiles(unzipped) {
   return { id: petId, displayName: petId, states, files };
 }
 
+export function validateSpritePetFiles(unzipped) {
+  const files = normalizedArchiveFiles(unzipped);
+  if (files.length < 2 || files.some(({ name }) => name.includes("/"))) {
+    throw petError("invalid_sprite_archive", "Codex 宠物 ZIP 根目录应包含 pet.json 和精灵表图片");
+  }
+  const manifests = files.filter(({ name }) => name.toLowerCase() === "pet.json");
+  if (manifests.length !== 1 || manifests[0].bytes.length > 64 * 1024) {
+    throw petError("invalid_sprite_manifest", "Codex 宠物 ZIP 需要一个有效的 pet.json");
+  }
+  let manifest;
+  try {
+    const text = Buffer.from(manifests[0].bytes).toString("utf8").replace(/^\uFEFF/, "");
+    manifest = JSON.parse(text);
+  } catch {
+    throw petError("invalid_sprite_manifest", "pet.json 不是有效的 JSON");
+  }
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    throw petError("invalid_sprite_manifest", "pet.json 内容无效");
+  }
+  const id = safePetId(manifest.id);
+  const version = manifest.spriteVersionNumber == null
+    ? 1
+    : Number(manifest.spriteVersionNumber);
+  if (![1, 2].includes(version)) {
+    throw petError("unsupported_sprite_version", "spriteVersionNumber 只支持 1 或 2");
+  }
+  const originalName = String(manifest.spritesheetPath || "").trim();
+  const extension = path.extname(originalName).toLowerCase();
+  if (!originalName || path.basename(originalName) !== originalName
+    || !SPRITE_IMAGE_EXTENSIONS.has(extension)) {
+    throw petError("invalid_spritesheet_path", "spritesheetPath 必须指向 ZIP 根目录中的 PNG 或 WebP");
+  }
+  const asset = files.find(({ name }) => name === originalName);
+  if (!asset) throw petError("missing_spritesheet", `ZIP 中缺少精灵表：${originalName}`);
+  const image = inspectSpriteImage(asset.bytes, originalName);
+  const contract = SPRITE_PET_CONTRACTS[version];
+  if (image.width !== contract.width || image.height !== contract.height) {
+    throw petError(
+      "invalid_spritesheet_size",
+      `v${version} 精灵表应为 ${contract.width}×${contract.height}，实际为 ${image.width}×${image.height}`,
+    );
+  }
+  if (!image.hasAlpha) throw petError("missing_sprite_alpha", "精灵表必须包含透明通道");
+  const displayName = String(manifest.displayName || id).trim().slice(0, 80) || id;
+  const description = String(manifest.description || "").trim().slice(0, 500);
+  return {
+    id,
+    displayName,
+    description,
+    format: "spritesheet",
+    spriteVersionNumber: version,
+    spritesheetPath: originalName,
+    width: 192,
+    height: 208,
+    asset,
+    image,
+  };
+}
+
 export class PetLibrary {
   constructor(rootPath) {
     this.rootPath = path.resolve(rootPath);
@@ -234,7 +367,39 @@ export class PetLibrary {
     const id = safePetId(value);
     const petRoot = path.join(this.rootPath, id);
     const manifest = JSON.parse(await readFile(path.join(petRoot, "pet.json"), "utf8"));
-    if (manifest.id !== id || manifest.format !== "state-gifs") {
+    if (manifest.id !== id) {
+      throw petError("invalid_managed_pet", "受管宠物清单无效");
+    }
+    const format = manifest.format === "state-gifs"
+      ? "state-gifs"
+      : manifest.format === "spritesheet" || manifest.spritesheetPath
+        ? "spritesheet"
+        : "";
+    if (format === "spritesheet") {
+      const version = manifest.spriteVersionNumber == null
+        ? 1
+        : Number(manifest.spriteVersionNumber);
+      const fileName = String(manifest.spritesheetPath || "");
+      const contract = SPRITE_PET_CONTRACTS[version];
+      if (!contract || path.basename(fileName) !== fileName
+        || !SPRITE_IMAGE_EXTENSIONS.has(path.extname(fileName).toLowerCase())) {
+        throw petError("invalid_managed_pet", "受管宠物精灵表清单无效");
+      }
+      const image = inspectSpriteImage(await readFile(path.join(petRoot, fileName)), fileName);
+      if (image.width !== contract.width || image.height !== contract.height || !image.hasAlpha) {
+        throw petError("invalid_managed_pet", "受管宠物精灵表无效");
+      }
+      return {
+        ...manifest,
+        format,
+        spriteVersionNumber: version,
+        spritesheetPath: fileName,
+        width: 192,
+        height: 208,
+        rootPath: petRoot,
+      };
+    }
+    if (format !== "state-gifs") {
       throw petError("invalid_managed_pet", "受管宠物清单无效");
     }
     const states = {};
@@ -267,7 +432,10 @@ export class PetLibrary {
     } catch {
       throw petError("invalid_zip", "ZIP 无法解压或已经损坏");
     }
-    const pet = validateGifPetFiles(unpacked);
+    const normalizedFiles = normalizedArchiveFiles(unpacked);
+    const pet = normalizedFiles.some(({ name }) => name.toLowerCase() === "pet.json")
+      ? validateSpritePetFiles(unpacked)
+      : { ...validateGifPetFiles(unpacked), format: "state-gifs" };
     await this.ensureDirectory();
     const destination = path.join(this.rootPath, pet.id);
     try {
@@ -280,26 +448,43 @@ export class PetLibrary {
     const staging = path.join(this.rootPath, `.staging-${randomUUID()}`);
     await mkdir(staging, { recursive: false });
     try {
-      const normalizedFiles = new Map(pet.files.map((file) => [file.name, file.bytes]));
-      for (const [state, originalName] of Object.entries(pet.states)) {
-        const fileName = `${pet.id}-${state}.gif`;
-        await writeFile(path.join(staging, fileName), normalizedFiles.get(originalName));
-        pet.states[state] = fileName;
-      }
       const importedAt = new Date().toISOString();
-      const manifest = {
-        id: pet.id,
-        displayName: pet.displayName,
-        description: "用户导入的逐状态 GIF 宠物",
-        format: "state-gifs",
-        spriteVersionNumber: 2,
-        width: 192,
-        height: 208,
-        states: pet.states,
-        importedAt,
-      };
+      let manifest;
+      if (pet.format === "spritesheet") {
+        await writeFile(path.join(staging, pet.spritesheetPath), pet.asset.bytes);
+        manifest = {
+          id: pet.id,
+          displayName: pet.displayName,
+          description: pet.description,
+          format: "spritesheet",
+          spriteVersionNumber: pet.spriteVersionNumber,
+          spritesheetPath: pet.spritesheetPath,
+          width: 192,
+          height: 208,
+          importedAt,
+        };
+      } else {
+        const archivedFiles = new Map(pet.files.map((file) => [file.name, file.bytes]));
+        for (const [state, originalName] of Object.entries(pet.states)) {
+          const fileName = `${pet.id}-${state}.gif`;
+          await writeFile(path.join(staging, fileName), archivedFiles.get(originalName));
+          pet.states[state] = fileName;
+        }
+        manifest = {
+          id: pet.id,
+          displayName: pet.displayName,
+          description: "用户导入的逐状态 GIF 宠物",
+          format: "state-gifs",
+          spriteVersionNumber: 2,
+          width: 192,
+          height: 208,
+          states: pet.states,
+          importedAt,
+        };
+      }
       const source = {
         kind: "zip-import",
+        format: pet.format,
         fileName: path.basename(absolutePath),
         sha256: createHash("sha256").update(archive).digest("hex"),
         importedAt,
@@ -323,7 +508,8 @@ export class PetLibrary {
   assetPath(value, fileName) {
     const id = safePetId(value);
     const name = String(fileName || "");
-    if (path.basename(name) !== name || !name.toLowerCase().endsWith(".gif")) {
+    const extension = path.extname(name).toLowerCase();
+    if (path.basename(name) !== name || ![".gif", ".png", ".webp"].includes(extension)) {
       throw petError("invalid_pet_asset", "宠物资源路径无效");
     }
     return path.join(this.rootPath, id, name);
