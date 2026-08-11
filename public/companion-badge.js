@@ -2,6 +2,7 @@ const badge = document.querySelector("#badge");
 const count = document.querySelector("#count");
 const sprite = document.querySelector("#pet-sprite");
 let activePointerId = null;
+let petRenderSequence = 0;
 
 const renderer = new window.PetRenderer({
   root: badge,
@@ -58,4 +59,49 @@ window.addEventListener("beforeunload", () => {
     window.companion?.petPointerCancel({ pointerId: activePointerId, screenX: 0, screenY: 0, time: Date.now() });
   }
 });
-window.companion?.onPetState?.((payload) => renderer.apply(payload));
+function waitForPetAsset(assetUrl, timeoutMs = 4_000) {
+  if (!assetUrl) return Promise.resolve();
+  return new Promise((resolve) => {
+    const image = new Image();
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      image.onload = null;
+      image.onerror = null;
+      resolve();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    image.onload = finish;
+    image.onerror = finish;
+    image.src = assetUrl;
+    if (image.complete && image.naturalWidth > 0) finish();
+  });
+}
+
+function waitForPetPaint(timeoutMs = 250) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    requestAnimationFrame(() => requestAnimationFrame(finish));
+  });
+}
+
+window.companion?.onPetState?.(async (payload) => {
+  const sequence = ++petRenderSequence;
+  const rendered = renderer.apply(payload);
+  await waitForPetAsset(rendered.assetUrl);
+  await waitForPetPaint();
+  if (sequence !== petRenderSequence) return;
+  window.companion?.petRendered({
+    generation: rendered.generation,
+    petId: payload?.pet?.id || "builtin-default",
+  });
+});

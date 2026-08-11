@@ -114,6 +114,13 @@ const APP_RUNTIME = resolveAppRuntime({
   defaultApp: process.defaultApp,
   explicitDevelopment: process.env.AGENT_PET_DEVELOPMENT === "1",
 });
+
+// A desktop process can outlive the terminal or launcher that created it.
+// Unavailable stdout/stderr streams (notably EPIPE on Windows) must never crash the GUI.
+for (const outputStream of [process.stdout, process.stderr]) {
+  outputStream?.on?.("error", () => {});
+}
+
 const PRELOAD_PATH = path.join(HERE, "preload.cjs");
 const BUILD_ICON_PATH = path.resolve(HERE, "..", "build", "icon.png");
 const DEFAULT_SERVICE_URL = "http://127.0.0.1:43123";
@@ -124,6 +131,7 @@ const SETTINGS_WIDTH = 620;
 const SETTINGS_HEIGHT = 760;
 const DAILY_REPORT_WIDTH = 500;
 const DAILY_REPORT_HEIGHT = 560;
+const INITIAL_PET_REVEAL_TIMEOUT_MS = 6_000;
 const INITIAL_USER_DATA_PATH = app.getPath("userData");
 const PRODUCT_USER_DATA_PATH = productUserDataPath(app.getPath("appData"));
 const LEGACY_USER_DATA_PATHS = [
@@ -161,6 +169,8 @@ let badgeDrag = null;
 let badgeInertiaTimer = null;
 let badgeWindowSizeLock = null;
 let correctingBadgeWindowSize = false;
+let badgeInitialRevealPending = false;
+let badgeInitialRevealTimer = null;
 let petStateController = null;
 let petLibrary = null;
 let selectedPet = null;
@@ -331,6 +341,33 @@ function enforceBadgeWindowSizeLock() {
   setBadgeWindowBoundsLocked({ x: bounds.x, y: bounds.y }, workAreaForBounds(bounds));
 }
 
+function finishInitialPetReveal(reason) {
+  if (!badgeInitialRevealPending) return false;
+  badgeInitialRevealPending = false;
+  clearTimeout(badgeInitialRevealTimer);
+  badgeInitialRevealTimer = null;
+  if (!badgeWindow || badgeWindow.isDestroyed()
+    || !preferenceStore?.get().appearance.showPet) return false;
+  // Recreate the Windows layered surface after the custom asset has rendered.
+  // Doing this while the prewarmed window is fully transparent avoids a visible flash
+  // and mirrors the hide/show cycle that previously made the pet appear manually.
+  badgeWindow.hide();
+  badgeWindow.setOpacity(1);
+  sendPetState();
+  badgeInitialRevealTimer = setTimeout(() => {
+    badgeInitialRevealTimer = null;
+    if (!badgeWindow || badgeWindow.isDestroyed()
+      || !preferenceStore?.get().appearance.showPet) return;
+    const bounds = badgeWindow.getBounds();
+    badgeWindow.setBounds(bounds, false);
+    sendPetState();
+    badgeWindow.showInactive();
+    badgeWindow.webContents.invalidate?.();
+    console.log(`[companion] badge window visible (${reason})`);
+  }, 100);
+  return true;
+}
+
 function applyPreferences(preferences) {
   nativeTheme.themeSource = preferences.appearance.theme;
 
@@ -352,8 +389,13 @@ function applyPreferences(preferences) {
     }
     sendPetState();
     schedulePositionSave();
-    if (preferences.appearance.showPet) badgeWindow.showInactive();
-    else badgeWindow.hide();
+    if (preferences.appearance.showPet) {
+      badgeWindow.setOpacity(badgeInitialRevealPending ? 0 : 1);
+      badgeWindow.showInactive();
+    } else {
+      badgeWindow.setOpacity(1);
+      badgeWindow.hide();
+    }
   }
   if (panelWindow && !panelWindow.isDestroyed()) {
     panelWindow.setAlwaysOnTop(preferences.appearance.alwaysOnTop, "floating");
@@ -1406,6 +1448,7 @@ async function createWindows() {
       sandbox: true,
     },
   });
+  badgeInitialRevealPending = true;
   captureBadgeWindowSizeLock();
   badgeWindow.on("resize", () => {
     if (correctingBadgeWindowSize) return;
@@ -1464,9 +1507,14 @@ async function createWindows() {
   console.log("[companion] task panel loaded");
   positionPanel();
   if (preferences.appearance.showPet) {
+    // A fully hidden transparent window may not compose its first custom GIF on Windows.
+    // Keep it participating in rendering at zero opacity, then reveal it after renderer ACK.
+    badgeWindow.setOpacity(0);
     badgeWindow.showInactive();
-    console.log("[companion] badge window visible");
   }
+  badgeInitialRevealTimer = setTimeout(() => {
+    finishInitialPetReveal("render timeout fallback");
+  }, INITIAL_PET_REVEAL_TIMEOUT_MS);
   schedulePositionSave();
 }
 
@@ -1851,6 +1899,11 @@ function installIpcHandlers() {
       petStateController?.acknowledgeAnimation(value?.generation);
     }
   });
+  ipcMain.on("pet-renderer:ready", (event) => {
+    if (badgeWindow && event.sender === badgeWindow.webContents) {
+      finishInitialPetReveal("first pet frame ready");
+    }
+  });
   ipcMain.on("companion:start-badge-drag", (event) => {
     if (badgeWindow && event.sender === badgeWindow.webContents) {
       const cursor = screen.getCursorScreenPoint();
@@ -1932,7 +1985,9 @@ if (!hasSingleInstanceLock) {
   app.quit();
 } else {
   app.on("second-instance", () => {
-    if (preferenceStore?.get().appearance.showPet) badgeWindow?.showInactive();
+    if (preferenceStore?.get().appearance.showPet && !badgeInitialRevealPending) {
+      badgeWindow?.showInactive();
+    }
     showPanel();
   });
 

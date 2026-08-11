@@ -19,18 +19,19 @@ class PetRenderer {
   }
 
   apply(payload) {
-    if (!payload) return;
+    if (!payload) return { assetUrl: "", generation: null };
     this.payload = payload;
     this.profile = payload.animationProfile || this.profile;
     const signature = `${payload.pet?.id || "builtin-default"}:${payload.state}:${payload.generation}:${payload.oneShot}`;
     this.root.dataset.state = payload.state || "idle";
     this.renderCount(payload.count);
-    this.configureSprite(payload.pet || {});
+    const assetUrl = this.configureSprite(payload.pet || {});
     if (signature !== this.signature) {
       this.signature = signature;
       this.reportedGeneration = null;
       this.restartAnimation();
     }
+    return { assetUrl, generation: payload.generation ?? null };
   }
 
   renderCount(value) {
@@ -53,7 +54,7 @@ class PetRenderer {
       this.sprite.style.backgroundSize = "contain";
       this.sprite.style.backgroundPosition = "center";
       this.sprite.style.imageRendering = pet.renderMode === "pixelated" ? "pixelated" : "auto";
-      return;
+      return stateUrl;
     }
 
     this.isGifMode = false;
@@ -63,11 +64,12 @@ class PetRenderer {
     this.sprite.hidden = !hasSprite;
     if (!hasSprite) {
       this.sprite.style.backgroundImage = "";
-      return;
+      return "";
     }
     this.sprite.dataset.version = Number(pet.spriteVersionNumber) === 2 ? "2" : "1";
     this.sprite.style.backgroundImage = `url("${spriteUrl.replaceAll('"', "%22")}")`;
     this.sprite.style.imageRendering = pet.renderMode === "smooth" ? "auto" : "pixelated";
+    return spriteUrl;
   }
 
   reducedMotion() {

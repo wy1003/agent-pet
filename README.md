@@ -155,6 +155,8 @@ npm install
 npm run companion
 ```
 
+在 Windows 上也可以直接双击项目根目录中的 `start-agent-pet.cmd`。脚本会在首次运行时自动安装依赖，然后启动桌面版 Agent Pet。
+
 运行测试：
 
 ```powershell

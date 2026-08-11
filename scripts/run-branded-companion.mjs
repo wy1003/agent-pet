@@ -56,12 +56,19 @@ if (process.argv.includes("--prepare-only")) {
   process.exit(0);
 }
 
+const detached = process.env.AGENT_PET_DETACHED === "1";
 const child = spawn(executable, [entryPoint], {
   cwd: root,
   env: { ...process.env, AGENT_PET_DEVELOPMENT: "1" },
-  stdio: "inherit",
-  windowsHide: false,
+  detached,
+  stdio: detached ? "ignore" : "inherit",
+  windowsHide: detached,
 });
+
+if (detached) {
+  child.unref();
+  process.exit(0);
+}
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => child.kill(signal));

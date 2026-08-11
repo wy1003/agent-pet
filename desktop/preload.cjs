@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld("companion", {
   petPointerUp: (value) => ipcRenderer.send("pet-window:pointer-up", value),
   petPointerCancel: (value) => ipcRenderer.send("pet-window:pointer-cancel", value),
   petAnimationEnd: (value) => ipcRenderer.send("pet-renderer:animation-end", value),
+  petRendered: (value) => ipcRenderer.send("pet-renderer:ready", value),
   onPetState: (callback) => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on("pet:state", listener);
