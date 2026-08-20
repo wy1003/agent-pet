@@ -411,6 +411,131 @@ h2 {
   gap: 10px;
 }
 
+.agent-provider-list {
+  display: grid;
+  gap: 10px;
+}
+
+.agent-provider-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
+  background: var(--card);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.agent-provider-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+  transform: translateY(-1px);
+}
+
+.agent-provider-card[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 38%, var(--card));
+}
+
+.agent-provider-icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  background: #f1f2f0;
+  overflow: hidden;
+}
+
+.agent-provider-icon img {
+  display: block;
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+}
+
+.agent-provider-icon.is-fallback {
+  color: #f5faf7;
+  background: #202622;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.agent-provider-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.agent-provider-copy strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-provider-copy small,
+.agent-provider-placeholder,
+.agent-provider-status,
+.general-subsection-heading p {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.agent-provider-state {
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--line) 55%, transparent);
+  font-size: 9px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.agent-provider-card[aria-pressed="true"] .agent-provider-state {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.agent-provider-placeholder {
+  padding: 14px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  text-align: center;
+}
+
+.agent-provider-status {
+  min-height: 15px;
+  margin: 8px 2px 0;
+}
+
+.agent-provider-status[data-state="error"] {
+  color: var(--danger);
+}
+
+.general-subsection-heading {
+  margin: 18px 0 12px;
+  padding-top: 17px;
+  border-top: 1px solid var(--line);
+}
+
+.general-subsection-heading h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+
+.general-subsection-heading p {
+  margin: 0;
+}
+
 .storage-location-heading {
   min-width: 0;
 }

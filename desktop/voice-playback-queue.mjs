@@ -78,6 +78,7 @@ export class VoicePlaybackQueue {
     this.synthesizeAudio = options.synthesizeAudio;
     this.playAudio = options.playAudio;
     this.speakText = options.speakText;
+    this.allowPreGeneration = options.allowPreGeneration || (() => true);
     this.onDelivery = options.onDelivery || (() => {});
     this.logger = options.logger || console;
     this.cache = options.cache || new TemporaryAudioCache(options.cacheDirectory);
@@ -126,6 +127,7 @@ export class VoicePlaybackQueue {
     const preferences = this.getPreferences();
     if (!preferences.notifications.voice.enabled) return;
     if (preferences.notifications.voice.engine !== "gpt-sovits") return;
+    if (!this.allowPreGeneration(preferences)) return;
     this.#ensureAudio(item, Number(item.priority || 0))
       .catch((error) => this.logger.warn("[voice-queue] pre-generation failed", error));
   }

@@ -12,7 +12,10 @@ const PET_RENDER_MODES = ["pixelated", "smooth"];
 const PET_REDUCED_MOTION = ["system", "reduce", "full"];
 
 export const DEFAULT_PREFERENCES = Object.freeze({
-  version: 13,
+  version: 15,
+  agent: {
+    activeProviderId: "codex",
+  },
   rules: {
     needs_input: true,
     completed: true,
@@ -76,6 +79,7 @@ export const DEFAULT_PREFERENCES = Object.freeze({
   appearance: {
     showPet: true,
     showBadge: true,
+    showUsageCard: true,
     alwaysOnTop: true,
     theme: "system",
     pet: {
@@ -155,6 +159,7 @@ export function normalizePreferences(value) {
   }
 
   const inputNotifications = object(input.notifications);
+  const agent = object(input.agent);
   const windows = object(inputNotifications.windows);
   const voice = object(inputNotifications.voice);
   const voiceStyle = object(voice.style);
@@ -179,7 +184,13 @@ export function normalizePreferences(value) {
   );
 
   return {
-    version: 13,
+    version: 15,
+    agent: {
+      activeProviderId: typeof agent.activeProviderId === "string"
+        && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(agent.activeProviderId)
+        ? agent.activeProviderId.toLowerCase()
+        : defaults.agent.activeProviderId,
+    },
     rules,
     notifications: {
       windows: {
@@ -308,6 +319,10 @@ export function normalizePreferences(value) {
     appearance: {
       showPet,
       showBadge: showPet,
+      showUsageCard: boolean(
+        appearance.showUsageCard,
+        defaults.appearance.showUsageCard,
+      ),
       alwaysOnTop: boolean(appearance.alwaysOnTop, defaults.appearance.alwaysOnTop),
       theme: oneOf(appearance.theme, THEMES, defaults.appearance.theme),
       pet: {

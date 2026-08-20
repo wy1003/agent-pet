@@ -6,6 +6,7 @@ import {
   defaultBadgeBounds,
   panelBoundsNearBadge,
   panelVerticalAlignment,
+  usageCardBoundsNearBadge,
 } from "../desktop/window-layout.mjs";
 
 const workArea = { x: 0, y: 0, width: 1920, height: 1080 };
@@ -34,6 +35,25 @@ test("task panel is positioned beside the badge and remains on screen", () => {
       workArea,
     ),
     { x: 1290, y: 354, width: 480, height: 700 },
+  );
+});
+
+test("usage card prefers the pet's right side and flips left at the screen edge", () => {
+  assert.deepEqual(
+    usageCardBoundsNearBadge(
+      { x: 700, y: 500, width: 112, height: 112 },
+      { width: 314, height: 150 },
+      workArea,
+    ),
+    { x: 822, y: 481, width: 314, height: 150 },
+  );
+  assert.deepEqual(
+    usageCardBoundsNearBadge(
+      { x: 1782, y: 900, width: 112, height: 112 },
+      { width: 314, height: 150 },
+      workArea,
+    ),
+    { x: 1458, y: 881, width: 314, height: 150 },
   );
 });
 

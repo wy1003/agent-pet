@@ -51,6 +51,24 @@ export function panelBoundsNearBadge(
   );
 }
 
+export function usageCardBoundsNearBadge(
+  badgeBounds,
+  cardSize,
+  workArea,
+  gap = 10,
+) {
+  const rightX = badgeBounds.x + badgeBounds.width + gap;
+  const leftX = badgeBounds.x - cardSize.width - gap;
+  const fitsRight = rightX + cardSize.width <= workArea.x + workArea.width;
+  const fitsLeft = leftX >= workArea.x;
+  const x = fitsRight || !fitsLeft ? rightX : leftX;
+  const y = badgeBounds.y + Math.round((badgeBounds.height - cardSize.height) / 2);
+  return clampWindowBounds(
+    { x, y, width: cardSize.width, height: cardSize.height },
+    workArea,
+  );
+}
+
 export function badgeBoundsForDrag(initialBounds, initialCursor, currentCursor, workArea) {
   return clampWindowBounds(
     {

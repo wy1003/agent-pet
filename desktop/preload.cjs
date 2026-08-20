@@ -8,6 +8,13 @@ contextBridge.exposeInMainWorld("companion", {
     ipcRenderer.on("companion:panel-shown", listener);
     return () => ipcRenderer.removeListener("companion:panel-shown", listener);
   },
+  getUsage: (options) => ipcRenderer.invoke("usage:get", options),
+  resizeUsageCard: (size) => ipcRenderer.send("usage:resize-card", size),
+  onUsageCardShown: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("usage:card-shown", listener);
+    return () => ipcRenderer.removeListener("usage:card-shown", listener);
+  },
   showBadgeMenu: () => ipcRenderer.invoke("companion:show-badge-menu"),
   openSettings: () => ipcRenderer.invoke("companion:open-settings"),
   getDailyReport: () => ipcRenderer.invoke("daily-report:get"),
@@ -29,6 +36,7 @@ contextBridge.exposeInMainWorld("companion", {
   resizePanel: (size) => ipcRenderer.send("companion:resize-panel", size),
   updateSummary: (summary) => ipcRenderer.send("companion:update-summary", summary),
   getSettings: () => ipcRenderer.invoke("settings:get"),
+  selectAgentProvider: (id) => ipcRenderer.invoke("agent-providers:select", id),
   updateSettings: (patch) => ipcRenderer.invoke("settings:update", patch),
   resetSettings: () => ipcRenderer.invoke("settings:reset"),
   getAppUpdateStatus: () => ipcRenderer.invoke("app:update-status"),

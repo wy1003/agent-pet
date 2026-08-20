@@ -320,7 +320,7 @@ function render() {
     taskList.querySelectorAll(".compact-task").length,
   );
   taskList.setAttribute("aria-busy", "false");
-  emptyState.hidden = ordered.length !== 0;
+  emptyState.hidden = ordered.length !== 0 || (companionMode && !usageMeterSlot.hidden);
   countBadge.textContent = String(ordered.length);
   countBadge.setAttribute("aria-label", `${ordered.length} 项任务`);
   if (companionMode) {
@@ -425,5 +425,7 @@ if (companionMode && "ResizeObserver" in window) {
   new ResizeObserver(requestPanelResize).observe(taskPanel);
 }
 window.addEventListener("beforeunload", () => eventSource?.close());
-window.companion?.onPanelShown?.(scheduleEmptyPanelClose);
+window.companion?.onPanelShown?.(() => {
+  scheduleEmptyPanelClose();
+});
 connect();

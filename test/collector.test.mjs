@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { CodexActivityCollector } from "../src/collector.mjs";
@@ -150,6 +150,63 @@ test("collector incrementally tails complete JSONL lines", async (t) => {
   assert.equal(session.latestAssistantText, "你好，我是 Codex。");
 });
 
+test("collector bootstraps old sessions without replaying history and tails new work", async (t) => {
+  const { root, file } = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const old = new Date(Date.now() - 60_000);
+  await utimes(file, old, old);
+  const collector = new CodexActivityCollector({
+    codexHome: root,
+    statePath: false,
+    staleAfterMs: Number.MAX_SAFE_INTEGER,
+    initialHistoryMs: 1_000,
+  });
+
+  await collector.scanOnce();
+  assert.equal(collector.getSession("session-1").status.petStatus, "idle");
+  assert.deepEqual(collector.getTasks({ scope: "all" }), []);
+
+  await appendFile(
+    file,
+    line("event_msg", { type: "task_started", turn_id: "turn-2" }, new Date().toISOString())
+      + line("event_msg", { type: "user_message", message: "恢复旧会话" }, new Date().toISOString()),
+    "utf8",
+  );
+  await collector.scanOnce();
+  const [task] = collector.getTasks({ scope: "all" });
+  assert.equal(task.turnId, "turn-2");
+  assert.equal(task.question, "恢复旧会话");
+  assert.equal(task.status, "running");
+});
+
+test("collector streams past oversized irrelevant tool output", async (t) => {
+  const { root, file } = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await appendFile(
+    file,
+    line("response_item", {
+      type: "function_call_output",
+      output: "x".repeat(2 * 1024 * 1024),
+    }, "2026-08-01T13:12:00.000Z")
+      + line("event_msg", {
+        type: "task_complete",
+        turn_id: "turn-1",
+        last_agent_message: "大工具输出之后仍能完成",
+      }, "2026-08-01T13:13:00.000Z"),
+    "utf8",
+  );
+  const collector = new CodexActivityCollector({
+    codexHome: root,
+    statePath: false,
+    staleAfterMs: Number.MAX_SAFE_INTEGER,
+  });
+
+  await collector.scanOnce();
+  const [task] = collector.getTasks({ scope: "all" });
+  assert.equal(task.status, "completed");
+  assert.equal(task.latestResponse, "大工具输出之后仍能完成");
+});
+
 test("HTTP snapshot, health identity and read endpoints expose collector state", async (t) => {
   const { root } = await fixture();
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -233,6 +290,16 @@ test("HTTP server provides the local task list UI", async (t) => {
   assert.match(appScript, /resizePanel\(\{[\s\S]*?itemCount:\s*visiblePanelItemCount[\s\S]*?\}\)/);
   assert.match(appScript, /\/api\/v1\/tasks\/acknowledge-all/);
 
+  const usageScript = await fetch(`${base}/usage-meter.mjs`);
+  assert.equal(usageScript.status, 200);
+  const usageSource = await usageScript.text();
+  assert.match(usageSource, /registerUsageRenderer/);
+  assert.match(usageSource, /codex-quota/);
+
+  const usageCard = await fetch(`${base}/usage-card.html`);
+  assert.equal(usageCard.status, 200);
+  assert.match(await usageCard.text(), /usage-card-root/);
+
   const presentationScript = await fetch(`${base}/compact-task-presentation.mjs`);
   assert.equal(presentationScript.status, 200);
   const presentationSource = await presentationScript.text();
@@ -297,6 +364,8 @@ test("HTTP server provides the local task list UI", async (t) => {
   assert.match(settingsPage, /id="test-notification"/);
   assert.match(settingsPage, /data-page="general"/);
   assert.match(settingsPage, /data-settings-page="general"/);
+  assert.match(settingsPage, /id="agent-provider-list"/);
+  assert.match(settingsPage, /连接智能体/);
   assert.match(settingsPage, /id="notification-history-path"/);
   assert.match(settingsPage, /id="app-version"/);
   assert.match(settingsPage, /id="app-update-status"/);
@@ -336,6 +405,10 @@ test("HTTP server provides the local task list UI", async (t) => {
   const communityQr = await fetch(`${base}/assets/community/qq-group-650561994.png`);
   assert.equal(communityQr.status, 200);
   assert.equal(communityQr.headers.get("content-type"), "image/png");
+  const codexAgentIcon = await fetch(`${base}/assets/agents/codex.svg`);
+  assert.equal(codexAgentIcon.status, 200);
+  assert.equal(codexAgentIcon.headers.get("content-type"), "image/svg+xml");
+  assert.match(await codexAgentIcon.text(), /<svg/);
   assert.ok((await communityQr.arrayBuffer()).byteLength > 100_000);
 
   const settingsStyles = await fetch(`${base}/settings.css`);
@@ -365,6 +438,8 @@ test("HTTP server provides the local task list UI", async (t) => {
   assert.equal(settingsScript.status, 200);
   const settingsScriptText = await settingsScript.text();
   assert.match(settingsScriptText, /updateSettings/);
+  assert.match(settingsScriptText, /selectAgentProvider/);
+  assert.match(settingsScriptText, /renderAgentProviders/);
   assert.match(settingsScriptText, /manageGptSovitsService/);
   assert.match(settingsScriptText, /getGptSovitsServiceStatus/);
   assert.match(settingsScriptText, /getGptSovitsRuntimeOptions/);

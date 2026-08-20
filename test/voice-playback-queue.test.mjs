@@ -93,3 +93,35 @@ test("GPT-SoVITS pre-generation is reused and its temporary audio is deleted aft
   assert.equal((await readdir(directory)).length, 0);
   await queue.stop();
 });
+
+test("GPT-SoVITS can skip idle pre-generation and still synthesize on delivery", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "voice-queue-lazy-test-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let syntheses = 0;
+  const queue = new VoicePlaybackQueue({
+    cacheDirectory: directory,
+    getPreferences: () => voicePreferences("gpt-sovits"),
+    allowPreGeneration: () => false,
+    synthesizeAudio: async () => {
+      syntheses += 1;
+      return { audio: Buffer.from("lazy-audio"), mimeType: "audio/wav" };
+    },
+    playAudio: async () => ({ ok: true }),
+    speakText: async () => ({ ok: true }),
+  });
+  const item = {
+    notificationId: "notice-lazy",
+    taskId: "lazy-task",
+    event: "completed",
+    text: "按需合成。",
+    priority: 50,
+  };
+
+  queue.prepare(item);
+  await queue.waitForIdle();
+  assert.equal(syntheses, 0);
+  queue.enqueue(item);
+  await queue.waitForIdle();
+  assert.equal(syntheses, 1);
+  await queue.stop();
+});

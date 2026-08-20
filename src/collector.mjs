@@ -16,6 +16,9 @@ import { defaultIgnoredProjectPaths, normalizeProjectPath } from "./internal-pro
 
 const READ_CHUNK_BYTES = 64 * 1024;
 const SUBAGENT_FAST_SKIP_BYTES = 8 * 1024 * 1024;
+const INITIAL_HISTORY_MS = 24 * 60 * 60 * 1000;
+const OWNER_SCAN_BYTES = 1024 * 1024;
+const MAX_BUFFERED_LINE_BYTES = 1024 * 1024;
 
 async function listJsonlFiles(root) {
   const files = [];
@@ -45,10 +48,28 @@ function splitCompleteLines(buffer) {
     if (buffer[index] !== 0x0a) continue;
     let end = index;
     if (end > start && buffer[end - 1] === 0x0d) end -= 1;
-    lines.push(buffer.subarray(start, end).toString("utf8"));
+    lines.push(buffer.subarray(start, end));
     start = index + 1;
   }
   return { lines, pending: buffer.subarray(start) };
+}
+
+function recordTypePrefix(line) {
+  const prefix = Buffer.isBuffer(line)
+    ? line.subarray(0, Math.min(line.length, 2048)).toString("utf8")
+    : String(line || "").slice(0, 2048);
+  return {
+    prefix,
+    type: /"type"\s*:\s*"([^"]+)"/.exec(prefix)?.[1] || "",
+  };
+}
+
+function lineCanAffectSession(line, ownerResolved) {
+  if (!ownerResolved) return true;
+  const { prefix, type } = recordTypePrefix(line);
+  if (["session_meta", "turn_context", "event_msg"].includes(type)) return true;
+  if (type !== "response_item") return false;
+  return /"type"\s*:\s*"(?:function_call|custom_tool_call|tool_search_call)"/.test(prefix);
 }
 
 function activityTime(session) {
@@ -107,6 +128,10 @@ export class CodexActivityCollector extends EventEmitter {
       1,
       Number(options.subagentFastSkipBytes ?? SUBAGENT_FAST_SKIP_BYTES),
     );
+    this.initialHistoryMs = Math.max(
+      0,
+      Number(options.initialHistoryMs ?? INITIAL_HISTORY_MS),
+    );
     this.ignoredProjectPaths = new Set(
       (options.ignoredProjectPaths || defaultIgnoredProjectPaths())
         .filter(Boolean)
@@ -159,8 +184,29 @@ export class CodexActivityCollector extends EventEmitter {
       await this.#loadVisibilityState();
       await this.#loadSessionIndex();
       const files = await listJsonlFiles(this.sessionsDir);
-      for (const filePath of files) {
-        await this.#readAppended(filePath);
+      if (!this.initialized) {
+        const visibleSessionIds = new Set(
+          [...this.visibleTaskIds]
+            .map((taskId) => /^codex:([^:]+):/.exec(taskId)?.[1] || "")
+            .filter(Boolean),
+        );
+        const recentCutoff = Date.now() - this.initialHistoryMs;
+        for (const filePath of files) {
+          const info = await stat(filePath);
+          const fileName = path.basename(filePath);
+          const restoresVisibleTask = [...visibleSessionIds].some((sessionId) => (
+            fileName.includes(sessionId)
+          ));
+          if (restoresVisibleTask || info.mtimeMs >= recentCutoff) {
+            await this.#readAppended(filePath, info);
+          } else {
+            await this.#bootstrapHistoricalFile(filePath, info);
+          }
+        }
+      } else {
+        for (const filePath of files) {
+          await this.#readAppended(filePath);
+        }
       }
       this.#applyIndexTitles();
       const now = Date.now();
@@ -395,6 +441,45 @@ export class CodexActivityCollector extends EventEmitter {
     this.indexSignature = signature;
   }
 
+  async #bootstrapHistoricalFile(filePath, info) {
+    if (this.files.has(filePath)) return;
+    const fileState = {
+      offset: info.size,
+      pending: Buffer.alloc(0),
+      skippingLine: false,
+      sessionId: null,
+      ownerResolved: false,
+      ignored: false,
+      contentSkipped: false,
+    };
+    this.files.set(filePath, fileState);
+    if (!info.size) return;
+
+    const handle = await open(filePath, "r");
+    try {
+      let position = 0;
+      let pending = Buffer.alloc(0);
+      while (position < Math.min(info.size, OWNER_SCAN_BYTES) && !fileState.ownerResolved) {
+        const length = Math.min(READ_CHUNK_BYTES, info.size - position, OWNER_SCAN_BYTES - position);
+        const buffer = Buffer.allocUnsafe(length);
+        const { bytesRead } = await handle.read(buffer, 0, length, position);
+        if (!bytesRead) break;
+        position += bytesRead;
+        const current = buffer.subarray(0, bytesRead);
+        const complete = pending.length ? Buffer.concat([pending, current]) : current;
+        const split = splitCompleteLines(complete);
+        pending = Buffer.from(split.pending);
+        for (const line of split.lines) {
+          if (!line.length) continue;
+          this.#processLine(filePath, fileState, line);
+          if (fileState.ownerResolved) break;
+        }
+      }
+    } finally {
+      await handle.close();
+    }
+  }
+
   #applyIndexTitles() {
     for (const [sessionId, title] of this.indexTitles) {
       const session = this.sessions.get(sessionId);
@@ -402,13 +487,15 @@ export class CodexActivityCollector extends EventEmitter {
     }
   }
 
-  async #readAppended(filePath) {
-    let info;
-    try {
-      info = await stat(filePath);
-    } catch (error) {
-      if (error?.code === "ENOENT") return;
-      throw error;
+  async #readAppended(filePath, knownInfo = null) {
+    let info = knownInfo;
+    if (!info) {
+      try {
+        info = await stat(filePath);
+      } catch (error) {
+        if (error?.code === "ENOENT") return;
+        throw error;
+      }
     }
 
     let fileState = this.files.get(filePath);
@@ -416,6 +503,7 @@ export class CodexActivityCollector extends EventEmitter {
       fileState = {
         offset: 0,
         pending: Buffer.alloc(0),
+        skippingLine: false,
         sessionId: null,
         ownerResolved: false,
         ignored: false,
@@ -426,6 +514,7 @@ export class CodexActivityCollector extends EventEmitter {
     if (info.size < fileState.offset) {
       fileState.offset = 0;
       fileState.pending = Buffer.alloc(0);
+      fileState.skippingLine = false;
       fileState.sessionId = null;
       fileState.ownerResolved = false;
       fileState.ignored = false;
@@ -434,6 +523,7 @@ export class CodexActivityCollector extends EventEmitter {
     if (fileState.ignored || fileState.contentSkipped) {
       fileState.offset = info.size;
       fileState.pending = Buffer.alloc(0);
+      fileState.skippingLine = false;
       return;
     }
     if (info.size === fileState.offset) return;
@@ -448,13 +538,25 @@ export class CodexActivityCollector extends EventEmitter {
         const { bytesRead } = await handle.read(buffer, 0, length, position);
         if (!bytesRead) break;
         position += bytesRead;
-        const current = buffer.subarray(0, bytesRead);
+        let current = buffer.subarray(0, bytesRead);
+        if (fileState.skippingLine) {
+          const newline = current.indexOf(0x0a);
+          if (newline === -1) continue;
+          fileState.skippingLine = false;
+          current = current.subarray(newline + 1);
+          if (!current.length) continue;
+        }
         const complete = pending.length ? Buffer.concat([pending, current]) : current;
         const split = splitCompleteLines(complete);
         pending = Buffer.from(split.pending);
+        if (pending.length > MAX_BUFFERED_LINE_BYTES
+          && !lineCanAffectSession(pending, fileState.ownerResolved)) {
+          pending = Buffer.alloc(0);
+          fileState.skippingLine = true;
+        }
         let skipRemainder = false;
         for (const line of split.lines) {
-          if (!line.trim()) continue;
+          if (!line.length || !lineCanAffectSession(line, fileState.ownerResolved)) continue;
           this.#processLine(filePath, fileState, line);
           const owner = fileState.sessionId ? this.sessions.get(fileState.sessionId) : null;
           if (fileState.ignored || (
@@ -483,7 +585,7 @@ export class CodexActivityCollector extends EventEmitter {
   #processLine(filePath, fileState, line) {
     let record;
     try {
-      record = JSON.parse(line);
+      record = JSON.parse(Buffer.isBuffer(line) ? line.toString("utf8") : line);
     } catch (error) {
       this.emit("diagnostic", {
         level: "warn",

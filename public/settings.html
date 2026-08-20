@@ -51,9 +51,17 @@
         <section id="general" class="settings-section" data-settings-page="general">
           <div class="section-heading">
             <div>
-              <h2>本地数据</h2>
-              <p>查看 Agent Pet 保存在本机的记录位置。</p>
+              <h2>连接智能体</h2>
+              <p>选择宠物当前跟随的 AI 智能体；任务、会话和额度信息会同步切换。</p>
             </div>
+          </div>
+          <div id="agent-provider-list" class="agent-provider-list" aria-live="polite">
+            <div class="agent-provider-placeholder">正在读取可连接的智能体…</div>
+          </div>
+          <p id="agent-provider-status" class="agent-provider-status" role="status"></p>
+          <div class="general-subsection-heading">
+            <h3>本地数据</h3>
+            <p>查看 Agent Pet 保存在本机的记录位置。</p>
           </div>
           <div class="storage-location">
             <div class="storage-location-heading">
@@ -254,7 +262,7 @@
                   </div>
                 </div>
                 <label class="service-auto-start">
-                  <span><strong>随应用自动启动</strong><small>打开应用时在后台启动服务，退出应用时同步停止。</small></span>
+                  <span><strong>使用时自动启动</strong><small>需要合成语音时启动服务，空闲 60 秒后自动停止以释放内存。</small></span>
                   <input type="checkbox" data-path="notifications.voice.gptSovits.autoStartService" />
                 </label>
               </section>
@@ -508,6 +516,10 @@
             <label class="setting-row">
               <span><strong>显示桌面宠物</strong><small>关闭后仍可通过托盘打开任务列表和设置。</small></span>
               <input type="checkbox" data-path="appearance.showPet" />
+            </label>
+            <label class="setting-row">
+              <span><strong>显示额度卡片</strong><small>点击宠物打开任务列表时，在宠物旁显示当前 AI 服务的通用使用限额。</small></span>
+              <input type="checkbox" data-path="appearance.showUsageCard" />
             </label>
             <label class="setting-row">
               <span><strong>宠物与任务面板始终置顶</strong><small>让任务状态保持在其他窗口上方。</small></span>

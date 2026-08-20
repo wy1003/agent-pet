@@ -83,6 +83,7 @@ import {
   clampWindowBounds,
   panelBoundsNearBadge,
   panelVerticalAlignment,
+  usageCardBoundsNearBadge,
 } from "./window-layout.mjs";
 import {
   LEGACY_MANAGED_DATA_DIRECTORY,
@@ -100,6 +101,9 @@ import {
 import { agentPetIconPngBuffer } from "./app-icon.mjs";
 import { AppUpdater } from "./app-updater.mjs";
 import { resolveAppRuntime } from "./app-runtime.mjs";
+import { UsageProviderRegistry } from "./usage/usage-provider-registry.mjs";
+import { CodexUsageProvider } from "./usage/codex-usage-provider.mjs";
+import { AgentProviderRegistry } from "./agents/agent-provider-registry.mjs";
 
 const { autoUpdater } = electronUpdater;
 
@@ -127,10 +131,17 @@ const DEFAULT_SERVICE_URL = "http://127.0.0.1:43123";
 const PANEL_WIDTH = 350;
 const PANEL_HEIGHT = 380;
 const PANEL_MIN_HEIGHT = 58;
+const USAGE_CARD_WIDTH = 314;
+const USAGE_CARD_HEIGHT = 150;
+const USAGE_CARD_MIN_HEIGHT = 118;
+const USAGE_CARD_MAX_HEIGHT = 300;
 const SETTINGS_WIDTH = 620;
 const SETTINGS_HEIGHT = 760;
 const DAILY_REPORT_WIDTH = 500;
 const DAILY_REPORT_HEIGHT = 560;
+const PANEL_IDLE_RELEASE_MS = 30_000;
+const SPEECH_IDLE_RELEASE_MS = 60_000;
+const GPT_SOVITS_IDLE_RELEASE_MS = 60_000;
 const INITIAL_PET_REVEAL_TIMEOUT_MS = 6_000;
 const INITIAL_USER_DATA_PATH = app.getPath("userData");
 const PRODUCT_USER_DATA_PATH = productUserDataPath(app.getPath("appData"));
@@ -153,14 +164,20 @@ protocol.registerSchemesAsPrivileged([{
 
 let badgeWindow = null;
 let panelWindow = null;
+let panelWindowsPromise = null;
+let panelIdleTimer = null;
+let usageWindow = null;
 let panelVisibleItemCount = 0;
 let settingsWindow = null;
 let dailyReportWindow = null;
 let speechWindow = null;
+let speechWindowPromise = null;
+let speechIdleTimer = null;
 let tray = null;
 let serviceUrl = DEFAULT_SERVICE_URL;
 let ownedCollector = null;
 let ownedServer = null;
+let collectorReadyPromise = Promise.resolve();
 let quitting = false;
 let shutdownStarted = false;
 let savePositionTimer = null;
@@ -177,6 +194,7 @@ let selectedPet = null;
 let preferenceStore = null;
 let voiceLibrary = null;
 let gptSovitsService = null;
+let gptSovitsIdleTimer = null;
 let phrasePoolStore = null;
 let codexCopywriter = null;
 let dailyReportGenerator = null;
@@ -193,14 +211,13 @@ let remoteTaskRegistry = null;
 let remoteCodexExecutor = null;
 let remoteControlController = null;
 let appUpdater = null;
+let usageProviderRegistry = null;
+let agentProviderRegistry = null;
 let loadedNotificationVoiceSignature = "";
 let managedDataRoot = null;
 let speechRequestSerial = 0;
 let speechCapabilities = { supported: false, voices: [] };
 let resolveSpeechReady = null;
-const speechReady = new Promise((resolve) => {
-  resolveSpeechReady = resolve;
-});
 const pendingSpeechRequests = new Map();
 
 function statePath() {
@@ -265,12 +282,30 @@ function scheduleCopywriter(preferences, delayMs) {
 function settingsState() {
   return {
     preferences: preferenceStore.get(),
+    agentProviders: agentProviderRegistry?.snapshot() || {
+      activeProviderId: "",
+      providers: [],
+    },
     capabilities: {
       openAtLogin: APP_RUNTIME.packaged,
       voiceDelivery: speechCapabilities.supported,
       mobileDelivery: true,
     },
   };
+}
+
+function activateAgentProvider(preferences = preferenceStore?.get()) {
+  if (!agentProviderRegistry || !preferences) return null;
+  let provider;
+  try {
+    provider = agentProviderRegistry.setActiveProvider(preferences.agent.activeProviderId);
+  } catch {
+    provider = agentProviderRegistry.setActiveProvider("codex");
+  }
+  usageProviderRegistry?.setActiveProvider(provider.usageProviderId);
+  sendPetState();
+  if (usageWindow?.isVisible()) usageWindow.webContents.send("usage:card-shown");
+  return provider;
 }
 
 function remoteControlState() {
@@ -370,6 +405,7 @@ function finishInitialPetReveal(reason) {
 
 function applyPreferences(preferences) {
   nativeTheme.themeSource = preferences.appearance.theme;
+  activateAgentProvider(preferences);
 
   if (badgeWindow && !badgeWindow.isDestroyed()) {
     badgeWindow.setAlwaysOnTop(preferences.appearance.alwaysOnTop, "floating");
@@ -399,6 +435,11 @@ function applyPreferences(preferences) {
   }
   if (panelWindow && !panelWindow.isDestroyed()) {
     panelWindow.setAlwaysOnTop(preferences.appearance.alwaysOnTop, "floating");
+  }
+  if (usageWindow && !usageWindow.isDestroyed()) {
+    usageWindow.setAlwaysOnTop(preferences.appearance.alwaysOnTop, "floating");
+    if (!preferences.appearance.showUsageCard) usageWindow.hide();
+    else if (panelWindow?.isVisible()) showUsageCard();
   }
   if (APP_RUNTIME.packaged) {
     app.setLoginItemSettings({ openAtLogin: preferences.startup.openAtLogin });
@@ -457,6 +498,7 @@ function keepPetOnVisibleDisplay() {
   });
   setBadgeWindowBoundsLocked(currentBounds, targetDisplay.workArea);
   positionPanel();
+  positionUsageCard();
   schedulePositionSave();
 }
 
@@ -491,6 +533,12 @@ function petStatePayload(state = petStateController?.snapshot()) {
     ...requestedState,
     state: resolveAvailablePetState(requestedState.state, availableStates),
     animationProfile: PET_ANIMATION_PROFILE,
+    agent: agentProviderRegistry?.current()
+      ? {
+          providerId: agentProviderRegistry.current().id,
+          displayName: agentProviderRegistry.current().displayName,
+        }
+      : null,
     pet: {
       id: pet.id,
       format: pet.format,
@@ -550,6 +598,7 @@ function finishPetMotion(reopenPanel = false) {
   stopPetInertia();
   enforceBadgeWindowSizeLock();
   positionPanel();
+  positionUsageCard();
   schedulePositionSave();
   if (reopenPanel) showPanel();
 }
@@ -560,6 +609,7 @@ function stopBadgeDrag() {
   stopPetInertia();
   enforceBadgeWindowSizeLock();
   positionPanel();
+  positionUsageCard();
   schedulePositionSave();
   if (reopenPanel) showPanel();
 }
@@ -600,6 +650,7 @@ function movePetPointer(value) {
     badgeDrag.dragging = true;
     badgeDrag.panelWasVisible = Boolean(panelWindow?.isVisible());
     panelWindow?.hide();
+    usageWindow?.hide();
   }
   const horizontalDelta = current.x - (badgeDrag.lastCursor?.x ?? badgeDrag.initialCursor.x);
   if (Math.abs(horizontalDelta) >= 1) badgeDrag.direction = horizontalDelta > 0 ? "right" : "left";
@@ -701,6 +752,7 @@ async function collectorServiceHealth(baseUrl) {
 async function ensureCollectorService() {
   const existingHealth = await collectorServiceHealth(DEFAULT_SERVICE_URL);
   if (isCompatibleCollectorHealth(existingHealth, DESKTOP_COLLECTOR_IDENTITY)) {
+    collectorReadyPromise = Promise.resolve();
     console.log(`[companion] attached to ${DEFAULT_SERVICE_URL}`);
     return DEFAULT_SERVICE_URL;
   }
@@ -719,7 +771,6 @@ async function ensureCollectorService() {
       fallbackRoot: path.join(app.getPath("userData"), "copywriter"),
     }),
   });
-  await collector.start();
 
   let api = createCollectorServer(collector, {
     host: "127.0.0.1",
@@ -733,7 +784,7 @@ async function ensureCollectorService() {
     await api.stop();
     const racedHealth = await collectorServiceHealth(DEFAULT_SERVICE_URL);
     if (isCompatibleCollectorHealth(racedHealth, DESKTOP_COLLECTOR_IDENTITY)) {
-      await collector.stop();
+      collectorReadyPromise = Promise.resolve();
       return DEFAULT_SERVICE_URL;
     }
     api = createCollectorServer(collector, {
@@ -749,6 +800,12 @@ async function ensureCollectorService() {
   ownedServer = api;
   const url = `http://127.0.0.1:${address.port}`;
   console.log(`[companion] embedded collector ready at ${url}`);
+  collectorReadyPromise = collector.start();
+  collectorReadyPromise
+    .then(() => console.log("[companion] collector initial scan complete"))
+    .catch((error) => {
+      console.error("[companion] collector initial scan failed", error);
+    });
   return url;
 }
 
@@ -772,25 +829,106 @@ function positionPanel() {
     height,
     badgeBounds.height,
   );
+  let panelAnchor = badgeBounds;
+  if (usageCardEnabled() && usageWindow && !usageWindow.isDestroyed()) {
+    const usageBounds = usageCardBoundsNearBadge(
+      badgeBounds,
+      {
+        width: Math.min(USAGE_CARD_WIDTH, workArea.width - 24),
+        height: usageWindow.getBounds().height,
+      },
+      workArea,
+      10,
+    );
+    if (usageBounds.x < badgeBounds.x) {
+      panelAnchor = { ...badgeBounds, x: usageBounds.x, width: 0 };
+    }
+  }
   panelWindow.setBounds(
-    panelBoundsNearBadge(badgeBounds, { width, height }, workArea, 12, verticalAlignment),
+    panelBoundsNearBadge(panelAnchor, { width, height }, workArea, 12, verticalAlignment),
     false,
   );
 }
 
-function showPanel() {
-  if (!panelWindow || panelWindow.isDestroyed()) return;
-  positionPanel();
-  panelWindow.show();
-  panelWindow.focus();
-  panelWindow.webContents.send("companion:panel-shown");
+function positionUsageCard() {
+  if (!badgeWindow || !usageWindow || usageWindow.isDestroyed()) return;
+  const badgeBounds = badgeWindow.getBounds();
+  const workArea = workAreaForBounds(badgeBounds);
+  const currentBounds = usageWindow.getBounds();
+  const width = Math.min(USAGE_CARD_WIDTH, workArea.width - 24);
+  const height = Math.min(currentBounds.height, workArea.height - 24);
+  usageWindow.setBounds(
+    usageCardBoundsNearBadge(badgeBounds, { width, height }, workArea, 10),
+    false,
+  );
 }
 
-function togglePanel() {
-  if (!panelWindow || panelWindow.isDestroyed()) return false;
-  if (panelWindow.isVisible()) panelWindow.hide();
-  else showPanel();
-  return panelWindow.isVisible();
+function usageCardEnabled() {
+  return preferenceStore?.get()?.appearance?.showUsageCard !== false;
+}
+
+function showUsageCard() {
+  if (!usageCardEnabled() || !usageWindow || usageWindow.isDestroyed()) return;
+  positionUsageCard();
+  usageWindow.showInactive();
+  usageWindow.webContents.send("usage:card-shown");
+}
+
+function cancelPanelRelease() {
+  if (panelIdleTimer) clearTimeout(panelIdleTimer);
+  panelIdleTimer = null;
+}
+
+function schedulePanelRelease() {
+  cancelPanelRelease();
+  panelIdleTimer = setTimeout(() => {
+    panelIdleTimer = null;
+    if (panelWindow?.isVisible() || usageWindow?.isVisible()) return;
+    if (panelWindow && !panelWindow.isDestroyed()) panelWindow.destroy();
+    if (usageWindow && !usageWindow.isDestroyed()) usageWindow.destroy();
+    panelWindow = null;
+    usageWindow = null;
+  }, PANEL_IDLE_RELEASE_MS);
+  panelIdleTimer.unref?.();
+}
+
+function hideCompanionPopovers() {
+  panelWindow?.hide();
+  usageWindow?.hide();
+  schedulePanelRelease();
+}
+
+function hidePopoversWhenFocusLeaves() {
+  setTimeout(() => {
+    if (quitting) return;
+    const panelFocused = panelWindow && !panelWindow.isDestroyed() && panelWindow.isFocused();
+    const usageFocused = usageWindow && !usageWindow.isDestroyed() && usageWindow.isFocused();
+    if (!panelFocused && !usageFocused) hideCompanionPopovers();
+  }, 120);
+}
+
+async function showPanel() {
+  try {
+    cancelPanelRelease();
+    await ensurePanelWindows();
+    showUsageCard();
+    positionPanel();
+    panelWindow.show();
+    panelWindow.focus();
+    panelWindow.webContents.send("companion:panel-shown");
+    return true;
+  } catch (error) {
+    console.error("[companion] task panel failed", error);
+    return false;
+  }
+}
+
+async function togglePanel() {
+  if (panelWindow?.isVisible() || usageWindow?.isVisible()) {
+    hideCompanionPopovers();
+    return false;
+  }
+  return showPanel();
 }
 
 function showBadgeMenu() {
@@ -902,6 +1040,23 @@ function speechState() {
   };
 }
 
+function cancelSpeechRelease() {
+  if (speechIdleTimer) clearTimeout(speechIdleTimer);
+  speechIdleTimer = null;
+}
+
+function scheduleSpeechRelease() {
+  if (pendingSpeechRequests.size) return;
+  cancelSpeechRelease();
+  speechIdleTimer = setTimeout(() => {
+    speechIdleTimer = null;
+    if (pendingSpeechRequests.size) return;
+    if (speechWindow && !speechWindow.isDestroyed()) speechWindow.destroy();
+    speechWindow = null;
+  }, SPEECH_IDLE_RELEASE_MS);
+  speechIdleTimer.unref?.();
+}
+
 function updateSpeechCapabilities(value) {
   const previousSignature = `${speechCapabilities.supported}:${speechCapabilities.voices.map((voice) => voice.voiceURI).join("|")}`;
   const voices = Array.isArray(value?.voices)
@@ -937,17 +1092,22 @@ function settleSpeechRequest(value) {
     ok: Boolean(value?.ok),
     error: value?.ok ? null : String(value?.error || "synthesis_failed"),
   });
+  scheduleSpeechRelease();
 }
 
-function requestSpeech(text, options = {}) {
+async function requestSpeech(text, options = {}) {
+  cancelSpeechRelease();
+  await ensureSpeechWindow();
   if (!speechCapabilities.supported || !speechWindow || speechWindow.isDestroyed()) {
-    return Promise.resolve({ ok: false, error: "speech_unavailable" });
+    scheduleSpeechRelease();
+    return { ok: false, error: "speech_unavailable" };
   }
   const id = `speech-${Date.now()}-${++speechRequestSerial}`;
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       pendingSpeechRequests.delete(id);
       resolve({ ok: false, error: "speech_timeout" });
+      scheduleSpeechRelease();
     }, 30_000);
     pendingSpeechRequests.set(id, { resolve, timer });
     speechWindow.webContents.send("speech:speak", {
@@ -962,15 +1122,19 @@ function requestSpeech(text, options = {}) {
   });
 }
 
-function requestAudioPlayback(audio, mimeType = "audio/wav", options = {}) {
+async function requestAudioPlayback(audio, mimeType = "audio/wav", options = {}) {
+  cancelSpeechRelease();
+  await ensureSpeechWindow();
   if (!speechWindow || speechWindow.isDestroyed()) {
-    return Promise.resolve({ ok: false, error: "speech_window_unavailable" });
+    scheduleSpeechRelease();
+    return { ok: false, error: "speech_window_unavailable" };
   }
   const id = `audio-${Date.now()}-${++speechRequestSerial}`;
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       pendingSpeechRequests.delete(id);
       resolve({ ok: false, error: "audio_playback_timeout" });
+      scheduleSpeechRelease();
     }, 60_000);
     pendingSpeechRequests.set(id, { resolve, timer });
     speechWindow.webContents.send("speech:play-audio", {
@@ -984,6 +1148,23 @@ function requestAudioPlayback(audio, mimeType = "audio/wav", options = {}) {
 
 function gptSovitsPreferences() {
   return preferenceStore.get().notifications.voice.gptSovits;
+}
+
+function cancelGptSovitsRelease() {
+  if (gptSovitsIdleTimer) clearTimeout(gptSovitsIdleTimer);
+  gptSovitsIdleTimer = null;
+}
+
+function scheduleGptSovitsRelease() {
+  cancelGptSovitsRelease();
+  if (!gptSovitsService?.hasManagedProcess()) return;
+  gptSovitsIdleTimer = setTimeout(() => {
+    gptSovitsIdleTimer = null;
+    gptSovitsService.stop().catch((error) => {
+      console.error("[companion] GPT-SoVITS idle stop failed", error);
+    });
+  }, GPT_SOVITS_IDLE_RELEASE_MS);
+  gptSovitsIdleTimer.unref?.();
 }
 
 async function selectedGptSovitsConfig() {
@@ -1016,6 +1197,7 @@ function isManagedGptSovitsUrl(baseUrl) {
 }
 
 async function waitForGptSovitsReady(baseUrl, timeoutMs = 3 * 60 * 1000) {
+  cancelGptSovitsRelease();
   const preferences = gptSovitsPreferences();
   if (isManagedGptSovitsUrl(baseUrl)) {
     const status = await gptSovitsService.status();
@@ -1040,17 +1222,21 @@ async function waitForGptSovitsReady(baseUrl, timeoutMs = 3 * 60 * 1000) {
 
 async function synthesizeNotificationAudio(text) {
   const config = await selectedGptSovitsConfig();
-  await waitForGptSovitsReady(config.baseUrl);
-  const signature = JSON.stringify({
-    baseUrl: config.baseUrl,
-    gptModelPath: config.gptModelPath,
-    sovitsModelPath: config.sovitsModelPath,
-  });
-  if (loadedNotificationVoiceSignature !== signature) {
-    await loadGptSovitsVoice(config);
-    loadedNotificationVoiceSignature = signature;
+  try {
+    await waitForGptSovitsReady(config.baseUrl);
+    const signature = JSON.stringify({
+      baseUrl: config.baseUrl,
+      gptModelPath: config.gptModelPath,
+      sovitsModelPath: config.sovitsModelPath,
+    });
+    if (loadedNotificationVoiceSignature !== signature) {
+      await loadGptSovitsVoice(config);
+      loadedNotificationVoiceSignature = signature;
+    }
+    return await synthesizeGptSovits(text, config);
+  } finally {
+    scheduleGptSovitsRelease();
   }
-  return synthesizeGptSovits(text, config);
 }
 
 function showTaskWindowsNotification({ task, event, text, preferences }) {
@@ -1082,6 +1268,7 @@ function createNotificationServices() {
     cacheDirectory: notificationAudioCachePath(),
     getPreferences: () => preferenceStore.get(),
     synthesizeAudio: (text) => synthesizeNotificationAudio(text),
+    allowPreGeneration: () => gptSovitsService?.hasManagedProcess() === true,
     playAudio: (audio, mimeType, preferences) => requestAudioPlayback(audio, mimeType, {
       volume: preferences.notifications.voice.volume,
       cancelPrevious: false,
@@ -1306,6 +1493,10 @@ async function removeGptSovitsService() {
 }
 
 async function createSpeechWindow() {
+  cancelSpeechRelease();
+  const ready = new Promise((resolve) => {
+    resolveSpeechReady = resolve;
+  });
   speechWindow = new BrowserWindow({
     width: 320,
     height: 180,
@@ -1324,8 +1515,11 @@ async function createSpeechWindow() {
     if (new URL(targetUrl).origin !== new URL(serviceUrl).origin) event.preventDefault();
   });
   speechWindow.on("closed", () => {
+    cancelSpeechRelease();
     speechWindow = null;
     speechCapabilities = { supported: false, voices: [] };
+    resolveSpeechReady?.(speechState());
+    resolveSpeechReady = null;
     for (const [id, pending] of pendingSpeechRequests) {
       clearTimeout(pending.timer);
       pending.resolve({ ok: false, error: "speech_window_closed" });
@@ -1334,9 +1528,27 @@ async function createSpeechWindow() {
   });
   await speechWindow.loadURL(`${serviceUrl}/speech.html`);
   await Promise.race([
-    speechReady,
+    ready,
     new Promise((resolve) => setTimeout(resolve, 2_000)),
   ]);
+  return speechState();
+}
+
+async function ensureSpeechWindow() {
+  cancelSpeechRelease();
+  if (speechWindow && !speechWindow.isDestroyed()) return speechState();
+  if (!speechWindowPromise) {
+    speechWindowPromise = createSpeechWindow()
+      .catch((error) => {
+        if (speechWindow && !speechWindow.isDestroyed()) speechWindow.destroy();
+        speechWindow = null;
+        throw error;
+      })
+      .finally(() => {
+        speechWindowPromise = null;
+      });
+  }
+  return speechWindowPromise;
 }
 
 function createAgentPetIcon(size = 32) {
@@ -1408,8 +1620,114 @@ function rebuildTrayMenu() {
 function createTray() {
   tray = new Tray(createTrayIcon());
   tray.setToolTip(PRODUCT_NAME);
-  tray.on("click", togglePanel);
+  tray.on("click", () => togglePanel());
   rebuildTrayMenu();
+}
+
+async function createPanelWindows() {
+  const preferences = preferenceStore.get();
+  const primaryWorkArea = screen.getPrimaryDisplay().workArea;
+  const panelHeight = Math.min(PANEL_HEIGHT, primaryWorkArea.height - 24);
+  panelWindow = new BrowserWindow({
+    width: PANEL_WIDTH,
+    height: panelHeight,
+    show: false,
+    frame: false,
+    hasShadow: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    alwaysOnTop: preferences.appearance.alwaysOnTop,
+    skipTaskbar: true,
+    resizable: false,
+    minWidth: 300,
+    minHeight: PANEL_MIN_HEIGHT,
+    maximizable: false,
+    fullscreenable: false,
+    webPreferences: {
+      preload: PRELOAD_PATH,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  panelWindow.setAlwaysOnTop(preferences.appearance.alwaysOnTop, "floating");
+  panelWindow.on("blur", hidePopoversWhenFocusLeaves);
+  panelWindow.on("close", (event) => {
+    if (quitting) return;
+    event.preventDefault();
+    panelWindow.hide();
+    schedulePanelRelease();
+  });
+  panelWindow.on("closed", () => {
+    panelWindow = null;
+  });
+  console.log("[companion] loading task panel");
+  await panelWindow.loadURL(`${serviceUrl}/?companion=1`);
+  console.log("[companion] task panel loaded");
+
+  usageWindow = new BrowserWindow({
+    width: USAGE_CARD_WIDTH,
+    height: USAGE_CARD_HEIGHT,
+    show: false,
+    frame: false,
+    hasShadow: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    alwaysOnTop: preferences.appearance.alwaysOnTop,
+    skipTaskbar: true,
+    resizable: false,
+    minWidth: USAGE_CARD_WIDTH,
+    minHeight: USAGE_CARD_MIN_HEIGHT,
+    maxWidth: USAGE_CARD_WIDTH,
+    maxHeight: USAGE_CARD_MAX_HEIGHT,
+    maximizable: false,
+    fullscreenable: false,
+    webPreferences: {
+      preload: PRELOAD_PATH,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  usageWindow.setAlwaysOnTop(preferences.appearance.alwaysOnTop, "floating");
+  usageWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  usageWindow.on("blur", hidePopoversWhenFocusLeaves);
+  usageWindow.on("close", (event) => {
+    if (quitting) return;
+    event.preventDefault();
+    usageWindow.hide();
+    schedulePanelRelease();
+  });
+  usageWindow.on("closed", () => {
+    usageWindow = null;
+  });
+  await usageWindow.loadURL(`${serviceUrl}/usage-card.html`);
+  positionPanel();
+  positionUsageCard();
+}
+
+async function ensurePanelWindows() {
+  if (panelWindow && !panelWindow.isDestroyed() && usageWindow && !usageWindow.isDestroyed()) {
+    return;
+  }
+  if (!panelWindowsPromise) {
+    if (panelWindow && !panelWindow.isDestroyed()) panelWindow.destroy();
+    if (usageWindow && !usageWindow.isDestroyed()) usageWindow.destroy();
+    panelWindow = null;
+    usageWindow = null;
+    panelWindowsPromise = createPanelWindows()
+      .catch((error) => {
+        if (panelWindow && !panelWindow.isDestroyed()) panelWindow.destroy();
+        if (usageWindow && !usageWindow.isDestroyed()) usageWindow.destroy();
+        panelWindow = null;
+        usageWindow = null;
+        throw error;
+      })
+      .finally(() => {
+        panelWindowsPromise = null;
+      });
+  }
+  await panelWindowsPromise;
 }
 
 async function createWindows() {
@@ -1417,7 +1735,6 @@ async function createWindows() {
   loadedWindowState = saved;
   const preferences = preferenceStore.get();
   const primaryDisplay = screen.getPrimaryDisplay();
-  const primaryWorkArea = primaryDisplay.workArea;
   const petSize = petWindowSize(preferences.appearance.pet.width, 4);
   const badgeBounds = restorePetWindowBounds(
     saved,
@@ -1458,6 +1775,7 @@ async function createWindows() {
   badgeWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   badgeWindow.on("moved", () => {
     positionPanel();
+    positionUsageCard();
     schedulePositionSave();
   });
   badgeWindow.on("show", rebuildTrayMenu);
@@ -1465,47 +1783,8 @@ async function createWindows() {
   console.log("[companion] loading task badge");
   await badgeWindow.loadURL(`${serviceUrl}/companion-badge.html`);
   console.log("[companion] task badge loaded");
-
-  const panelHeight = Math.min(PANEL_HEIGHT, primaryWorkArea.height - 24);
-  panelWindow = new BrowserWindow({
-    width: PANEL_WIDTH,
-    height: panelHeight,
-    show: false,
-    frame: false,
-    hasShadow: false,
-    transparent: true,
-    backgroundColor: "#00000000",
-    alwaysOnTop: preferences.appearance.alwaysOnTop,
-    skipTaskbar: true,
-    resizable: false,
-    minWidth: 300,
-    minHeight: PANEL_MIN_HEIGHT,
-    maximizable: false,
-    fullscreenable: false,
-    webPreferences: {
-      preload: PRELOAD_PATH,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-  panelWindow.setAlwaysOnTop(preferences.appearance.alwaysOnTop, "floating");
-  panelWindow.on("blur", () => {
-    setTimeout(() => {
-      if (!quitting && panelWindow && !panelWindow.isDestroyed() && !panelWindow.isFocused()) {
-        panelWindow.hide();
-      }
-    }, 120);
-  });
-  panelWindow.on("close", (event) => {
-    if (quitting) return;
-    event.preventDefault();
-    panelWindow.hide();
-  });
-  console.log("[companion] loading task panel");
-  await panelWindow.loadURL(`${serviceUrl}/?companion=1`);
-  console.log("[companion] task panel loaded");
   positionPanel();
+  positionUsageCard();
   if (preferences.appearance.showPet) {
     // A fully hidden transparent window may not compose its first custom GIF on Windows.
     // Keep it participating in rendering at zero opacity, then reveal it after renderer ACK.
@@ -1519,7 +1798,7 @@ async function createWindows() {
 }
 
 function isTrustedSender(event) {
-  return [badgeWindow, panelWindow, settingsWindow, dailyReportWindow, speechWindow].some(
+  return [badgeWindow, panelWindow, usageWindow, settingsWindow, dailyReportWindow, speechWindow].some(
     (window) => window && !window.isDestroyed() && event.sender === window.webContents,
   );
 }
@@ -1542,7 +1821,7 @@ function installIpcHandlers() {
   ipcMain.handle("companion:toggle-panel", () => togglePanel());
   ipcMain.handle("companion:hide-panel", () => {
     if (!panelWindow || panelWindow.isDestroyed()) return false;
-    panelWindow.hide();
+    hideCompanionPopovers();
     return false;
   });
   ipcMain.handle("companion:show-badge-menu", (event) => {
@@ -1556,6 +1835,25 @@ function installIpcHandlers() {
     requireTrustedSender(event);
     showSettings().catch((error) => console.error("[companion] settings failed", error));
     return true;
+  });
+  ipcMain.handle("usage:get", async (event, options) => {
+    requireTrustedSender(event);
+    if (!usageProviderRegistry) throw new Error("Usage providers are not ready");
+    return usageProviderRegistry.getCurrentUsage({ force: options?.force === true });
+  });
+  ipcMain.on("usage:resize-card", (event, value) => {
+    if (!usageWindow || usageWindow.isDestroyed() || event.sender !== usageWindow.webContents) return;
+    const badgeBounds = badgeWindow?.getBounds() || usageWindow.getBounds();
+    const workArea = workAreaForBounds(badgeBounds);
+    const requestedHeight = Math.round(Number(value?.height) || USAGE_CARD_HEIGHT);
+    const height = Math.max(
+      USAGE_CARD_MIN_HEIGHT,
+      Math.min(USAGE_CARD_MAX_HEIGHT, workArea.height - 24, requestedHeight),
+    );
+    const currentBounds = usageWindow.getBounds();
+    if (Math.abs(currentBounds.height - height) < 2) return;
+    usageWindow.setBounds({ ...currentBounds, width: USAGE_CARD_WIDTH, height }, false);
+    positionUsageCard();
   });
   async function readDailyReportTasks() {
     const tasksUrl = new URL("/api/v1/tasks", serviceUrl);
@@ -1583,6 +1881,16 @@ function installIpcHandlers() {
   });
   ipcMain.handle("settings:get", (event) => {
     requireTrustedSender(event);
+    return settingsState();
+  });
+  ipcMain.handle("agent-providers:select", async (event, id) => {
+    requireSettingsMainFrame(event);
+    const provider = agentProviderRegistry?.setActiveProvider(id);
+    if (!provider) throw new Error("智能体连接服务尚未就绪");
+    const preferences = await preferenceStore.update({
+      agent: { activeProviderId: provider.id },
+    });
+    applyPreferences(preferences);
     return settingsState();
   });
   ipcMain.handle("remote-control:get", (event) => {
@@ -1630,8 +1938,9 @@ function installIpcHandlers() {
   });
   ipcMain.handle("settings:update", async (event, patch) => {
     requireTrustedSender(event);
-    if (patch && Object.prototype.hasOwnProperty.call(patch, "remoteControl")) {
-      throw new Error("Remote-control permissions require the dedicated settings API");
+    if (patch && (Object.prototype.hasOwnProperty.call(patch, "remoteControl")
+      || Object.prototype.hasOwnProperty.call(patch, "agent"))) {
+      throw new Error("Agent and remote-control changes require their dedicated settings APIs");
     }
     const preferences = await preferenceStore.update(patch);
     applyPreferences(preferences);
@@ -1707,9 +2016,12 @@ function installIpcHandlers() {
       "Agent Pet 微信通知测试成功。后续任务状态会按提醒规则发送到这里。",
     );
   });
-  ipcMain.handle("speech:get-voices", (event) => {
+  ipcMain.handle("speech:get-voices", async (event) => {
     requireTrustedSender(event);
-    return speechState();
+    await ensureSpeechWindow();
+    const state = speechState();
+    scheduleSpeechRelease();
+    return state;
   });
   ipcMain.handle("speech:test", async (event, value) => {
     requireTrustedSender(event);
@@ -2022,6 +2334,26 @@ if (!hasSingleInstanceLock) {
         console.log(`[agent-pet] using compatible managed data root: ${managedDataRoot}`);
       }
       preferenceStore = new PreferenceStore(preferencesPath());
+      agentProviderRegistry = new AgentProviderRegistry({ activeProviderId: "codex" })
+        .register({
+          id: "codex",
+          displayName: "Codex",
+          description: "读取 Codex 任务、会话状态与通用使用限额。",
+          badge: "C",
+          iconUrl: "/assets/agents/codex.svg",
+          accent: "codex",
+          taskSourceId: "codex-desktop",
+          usageProviderId: "codex",
+          remoteExecutorId: "codex",
+          capabilities: { tasks: true, usage: true, remoteControl: true },
+        });
+      // The host only knows the active provider id. Provider-specific collection and UI
+      // stay isolated, so a future DeepSeek adapter can be registered without changing
+      // the task panel or the Codex implementation.
+      usageProviderRegistry = new UsageProviderRegistry({ activeProviderId: "codex" })
+        .register(new CodexUsageProvider({
+          codexHome: process.env.CODEX_HOME || path.join(os.homedir(), ".codex"),
+        }));
       remoteTaskRegistry = new RemoteTaskRegistry(remoteTaskRegistryPath());
       await remoteTaskRegistry.load();
       voiceLibrary = new VoiceLibrary(voiceLibraryPath());
@@ -2065,6 +2397,7 @@ if (!hasSingleInstanceLock) {
         cacheDirectory: dailyReportCachePath(),
       });
       const preferences = await preferenceStore.load();
+      activateAgentProvider(preferences);
       remoteCodexExecutor = new CodexRemoteExecutor();
       remoteChannelHub = new RemoteChannelHub();
       weixinChannelAdapter = createWeixinChannelAdapter({
@@ -2087,19 +2420,19 @@ if (!hasSingleInstanceLock) {
       applyPreferences(preferences);
       installIpcHandlers();
       serviceUrl = await ensureCollectorService();
-      await createSpeechWindow();
       await createWindows();
       installDisplayHandlers();
       createTray();
       appUpdater.start();
       await weixinRemoteService.start();
-      createNotificationServices();
-      scheduleCopywriter(preferences, 3_000);
-      if (preferences.notifications.voice.gptSovits.autoStartService) {
-        gptSovitsService.start().catch((error) => {
-          console.error("[companion] GPT-SoVITS auto-start failed", error);
+      collectorReadyPromise
+        .then(() => {
+          if (!quitting && !notificationOrchestrator) createNotificationServices();
+        })
+        .catch((error) => {
+          console.error("[notifications] waiting for collector failed", error);
         });
-      }
+      scheduleCopywriter(preferences, 3_000);
       console.log("[companion] tray ready");
     })
     .catch((error) => {

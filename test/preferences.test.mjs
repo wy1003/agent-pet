@@ -44,7 +44,8 @@ test("preferences normalize partial and invalid values against safe defaults", (
   assert.equal(preferences.rules.completed, false);
   assert.equal(preferences.rules.failed, false);
   assert.equal(preferences.rules.needs_input, true);
-  assert.equal(preferences.version, 13);
+  assert.equal(preferences.version, 15);
+  assert.equal(preferences.agent.activeProviderId, "codex");
   assert.equal(preferences.notifications.voice.engine, "windows");
   assert.equal(preferences.notifications.voice.rate, -5);
   assert.equal(preferences.notifications.voice.pitch, 2);
@@ -66,6 +67,7 @@ test("preferences normalize partial and invalid values against safe defaults", (
   assert.equal(preferences.appearance.theme, "dark");
   assert.equal(preferences.appearance.showPet, true);
   assert.equal(preferences.appearance.showBadge, true);
+  assert.equal(preferences.appearance.showUsageCard, true);
   assert.equal(preferences.appearance.pet.width, 112);
   assert.equal(preferences.appearance.pet.renderMode, "smooth");
   assert.equal("unknown" in preferences, false);
@@ -89,7 +91,7 @@ test("version 8 badge visibility migrates to pet visibility", () => {
     version: 8,
     appearance: { showBadge: false, pet: { width: 999, renderMode: "smooth" } },
   });
-  assert.equal(preferences.version, 13);
+  assert.equal(preferences.version, 15);
   assert.equal(preferences.appearance.showPet, false);
   assert.equal(preferences.appearance.showBadge, false);
   assert.equal(preferences.appearance.pet.width, 224);
@@ -108,7 +110,7 @@ test("global remote control defaults off and migrates the version 12 Weixin swit
       weixin: { enabled: true, allowedProjectCodes: ["P001"] },
     },
   });
-  assert.equal(migrated.version, 13);
+  assert.equal(migrated.version, 15);
   assert.deepEqual(migrated.remoteControl, { enabled: true });
 
   const whitelistOnly = normalizePreferences({
@@ -127,6 +129,26 @@ test("global remote control defaults off and migrates the version 12 Weixin swit
     },
   });
   assert.deepEqual(currentVersionWins.remoteControl, { enabled: false });
+});
+
+test("usage card visibility is a global appearance preference", () => {
+  assert.equal(normalizePreferences({ version: 14 }).appearance.showUsageCard, true);
+  assert.equal(normalizePreferences({
+    version: 14,
+    appearance: { showUsageCard: false },
+  }).appearance.showUsageCard, false);
+});
+
+test("active agent provider is persisted as one global connection", () => {
+  assert.equal(normalizePreferences({ version: 15 }).agent.activeProviderId, "codex");
+  assert.equal(normalizePreferences({
+    version: 15,
+    agent: { activeProviderId: "DeepSeek" },
+  }).agent.activeProviderId, "deepseek");
+  assert.equal(normalizePreferences({
+    version: 15,
+    agent: { activeProviderId: "../../bad" },
+  }).agent.activeProviderId, "codex");
 });
 
 test("daily report content level accepts supported values", () => {

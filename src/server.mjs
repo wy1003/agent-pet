@@ -10,6 +10,10 @@ const STATIC_FILES = new Map([
   ["/index.html", { name: "index.html", type: "text/html; charset=utf-8" }],
   ["/app.css", { name: "app.css", type: "text/css; charset=utf-8" }],
   ["/app.js", { name: "app.js", type: "text/javascript; charset=utf-8" }],
+  ["/usage-meter.mjs", { name: "usage-meter.mjs", type: "text/javascript; charset=utf-8" }],
+  ["/usage-card.html", { name: "usage-card.html", type: "text/html; charset=utf-8" }],
+  ["/usage-card.css", { name: "usage-card.css", type: "text/css; charset=utf-8" }],
+  ["/usage-card.js", { name: "usage-card.js", type: "text/javascript; charset=utf-8" }],
   [
     "/compact-task-presentation.mjs",
     { name: "compact-task-presentation.mjs", type: "text/javascript; charset=utf-8" },
@@ -17,6 +21,10 @@ const STATIC_FILES = new Map([
   ["/settings.html", { name: "settings.html", type: "text/html; charset=utf-8" }],
   ["/settings.css", { name: "settings.css", type: "text/css; charset=utf-8" }],
   ["/settings.js", { name: "settings.js", type: "text/javascript; charset=utf-8" }],
+  [
+    "/assets/agents/codex.svg",
+    { name: "assets/agents/codex.svg", type: "image/svg+xml" },
+  ],
   [
     "/assets/community/qq-group-650561994.png",
     { name: "assets/community/qq-group-650561994.png", type: "image/png" },

@@ -11,6 +11,8 @@ const testNotificationButton = document.querySelector("#test-notification");
 const testNotificationResult = document.querySelector("#test-notification-result");
 const notificationHistoryPathButton = document.querySelector("#notification-history-path");
 const notificationHistoryLocationStatus = document.querySelector("#notification-history-location-status");
+const agentProviderList = document.querySelector("#agent-provider-list");
+const agentProviderStatus = document.querySelector("#agent-provider-status");
 const navigationItems = [...document.querySelectorAll(".nav-item[data-page]")];
 const settingsPages = [...document.querySelectorAll("[data-settings-page]")];
 const voiceSelect = document.querySelector('[data-path="notifications.voice.voiceId"]');
@@ -238,6 +240,7 @@ function updateRangeOutput(control) {
 
 function render(state) {
   settingsState = state;
+  renderAgentProviders(state.agentProviders);
   for (const control of controls) {
     if (voiceStyleDirty && voiceStyleControlSet.has(control)) continue;
     const value = valueAtPath(state.preferences, control.dataset.path);
@@ -252,6 +255,57 @@ function render(state) {
     ? "伴生层会在 Windows 登录后自动运行。"
     : "安装正式版本后可用。";
   updateVoiceEngineUI();
+}
+
+function renderAgentProviders(connectionState) {
+  const activeProviderId = String(connectionState?.activeProviderId || "");
+  const providers = Array.isArray(connectionState?.providers) ? connectionState.providers : [];
+  if (!providers.length) {
+    const empty = document.createElement("div");
+    empty.className = "agent-provider-placeholder";
+    empty.textContent = "当前版本没有可连接的智能体。";
+    agentProviderList.replaceChildren(empty);
+    return;
+  }
+  const cards = providers.map((provider) => {
+    const selected = provider.id === activeProviderId || provider.selected === true;
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "agent-provider-card";
+    card.dataset.providerId = provider.id;
+    card.setAttribute("aria-pressed", String(selected));
+
+    const icon = document.createElement("span");
+    icon.className = "agent-provider-icon";
+    if (provider.iconUrl) {
+      const image = document.createElement("img");
+      image.src = provider.iconUrl;
+      image.alt = "";
+      image.setAttribute("aria-hidden", "true");
+      icon.append(image);
+    } else {
+      icon.classList.add("is-fallback");
+      icon.textContent = provider.badge || provider.displayName.slice(0, 1).toUpperCase();
+    }
+    const copy = document.createElement("span");
+    copy.className = "agent-provider-copy";
+    const name = document.createElement("strong");
+    name.textContent = provider.displayName;
+    const description = document.createElement("small");
+    description.textContent = provider.description || "连接后由该智能体提供任务状态。";
+    copy.append(name, description);
+    const status = document.createElement("span");
+    status.className = "agent-provider-state";
+    status.textContent = selected ? "已连接" : "连接";
+    card.append(icon, copy, status);
+    return card;
+  });
+  agentProviderList.replaceChildren(...cards);
+  const selected = providers.find((provider) => provider.id === activeProviderId);
+  agentProviderStatus.dataset.state = "";
+  agentProviderStatus.textContent = selected
+    ? `当前宠物已连接到 ${selected.displayName}。`
+    : "请选择一个智能体建立连接。";
 }
 
 async function loadStorageLocations() {
@@ -1467,6 +1521,30 @@ setInterval(refreshGptSovitsServiceStatus, 2_500);
 setInterval(() => {
   if (reconfigureGptSovitsDeviceButton.disabled) refreshGptSovitsRuntimeOptions();
 }, 15_000);
+
+agentProviderList.addEventListener("click", async (event) => {
+  const card = event.target.closest(".agent-provider-card[data-provider-id]");
+  if (!card || !window.companion?.selectAgentProvider) return;
+  const providerId = card.dataset.providerId;
+  if (providerId === settingsState?.agentProviders?.activeProviderId) {
+    const selected = settingsState.agentProviders.providers.find((item) => item.id === providerId);
+    agentProviderStatus.dataset.state = "";
+    agentProviderStatus.textContent = `${selected?.displayName || "当前智能体"} 已经连接。`;
+    return;
+  }
+  for (const button of agentProviderList.querySelectorAll("button")) button.disabled = true;
+  agentProviderStatus.dataset.state = "";
+  agentProviderStatus.textContent = "正在切换智能体连接…";
+  try {
+    render(await window.companion.selectAgentProvider(providerId));
+    setStatus("saved", "已保存");
+  } catch (error) {
+    agentProviderStatus.dataset.state = "error";
+    agentProviderStatus.textContent = `连接失败：${error.message || "智能体暂时不可用"}`;
+  } finally {
+    for (const button of agentProviderList.querySelectorAll("button")) button.disabled = false;
+  }
+});
 
 for (const item of navigationItems) {
   item.addEventListener("click", () => showPage(item.dataset.page));
