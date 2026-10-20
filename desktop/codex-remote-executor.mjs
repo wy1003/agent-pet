@@ -1,6 +1,7 @@
 import { stat, realpath } from "node:fs/promises";
 import { Codex } from "@openai/codex-sdk";
 import { buildRemoteRequest } from "../src/remote-request.mjs";
+import { resolveCodexExecutable } from "./codex-runtime.mjs";
 
 function promptText(value) {
   return String(value || "").trim().slice(0, 4_000);
@@ -39,7 +40,11 @@ function executionError(value, options = {}) {
   const source = value instanceof Error ? value : null;
   const message = String(source?.message || value || "Codex 远程任务执行失败").trim();
   const error = new Error(message || "Codex 远程任务执行失败", source ? { cause: source } : undefined);
-  if (/request timed out|timed out|timeout|deadline exceeded/i.test(message)) {
+  if (/already has an active writer|thread.+(?:is busy|is locked)/i.test(message)) {
+    error.code = "codex_thread_busy";
+  } else if (/thread history projection.+expected ordinal|unknown variant `(?:token_usage_record|item_completed)`/i.test(message)) {
+    error.code = "codex_history_incompatible";
+  } else if (/request timed out|timed out|timeout|deadline exceeded/i.test(message)) {
     error.code = "codex_response_timeout";
     error.transient = true;
   } else {
@@ -51,6 +56,7 @@ function executionError(value, options = {}) {
 }
 
 export function isCodexResponseTimeout(error) {
+  if (["codex_thread_busy", "codex_history_incompatible"].includes(error?.code)) return false;
   return error?.code === "codex_response_timeout"
     || /request timed out|timed out|timeout|deadline exceeded/i.test(String(error?.message || ""));
 }
@@ -123,7 +129,45 @@ async function consumeThread(thread, input, options = {}) {
 
 export class CodexRemoteExecutor {
   constructor(options = {}) {
-    this.codex = options.codex || new Codex(options.codexOptions);
+    this.codex = options.codex || null;
+    this.codexOptions = options.codexOptions || {};
+    this.resolveExecutable = options.resolveExecutable || resolveCodexExecutable;
+    this.createCodex = options.createCodex || ((value) => new Codex(value));
+    this.onDiagnostic = options.onDiagnostic || (() => {});
+    this.desktop = options.desktop || null;
+  }
+
+  async #client() {
+    if (this.codex) return this.codex;
+    const codexPathOverride = await this.resolveExecutable(this.codexOptions.codexPathOverride, {
+      env: this.codexOptions.env || process.env,
+    });
+    this.executablePath = codexPathOverride;
+    await this.#diagnostic({ stage: "runtime", executable: codexPathOverride });
+    return this.createCodex({ ...this.codexOptions, codexPathOverride });
+  }
+
+  async #diagnostic(value) {
+    try { await this.onDiagnostic(value); } catch {}
+  }
+
+  async #run(operation, value, callback) {
+    try {
+      return await callback();
+    } catch (error) {
+      // Persist only a bounded diagnostic, never the prompt, environment, or
+      // raw CLI stderr (which can include credentials and conversation data).
+      await this.#diagnostic({
+        stage: "failed",
+        operation,
+        route: error?.route || "sdk",
+        executable: this.executablePath || "",
+        sessionId: value.sessionId || "",
+        code: error?.code || "codex_execution_failed",
+        turnStarted: error?.turnStarted === true,
+      });
+      throw error;
+    }
   }
 
   async start(value = {}) {
@@ -131,11 +175,13 @@ export class CodexRemoteExecutor {
     if (typeof value.onThreadStarted !== "function") {
       throw new TypeError("新建远程任务必须提供会话持久化回调");
     }
-    const thread = this.codex.startThread(safeThreadOptions(cwd));
-    return consumeThread(thread, remotePrompt(value.prompt), {
-      signal: value.signal,
-      onThreadStarted: value.onThreadStarted,
-      requireThreadStarted: true,
+    return this.#run("start", value, async () => {
+      const thread = (await this.#client()).startThread(safeThreadOptions(cwd));
+      return consumeThread(thread, remotePrompt(value.prompt), {
+        signal: value.signal,
+        onThreadStarted: value.onThreadStarted,
+        requireThreadStarted: true,
+      });
     });
   }
 
@@ -143,10 +189,25 @@ export class CodexRemoteExecutor {
     const sessionId = String(value.sessionId || "").trim();
     if (!sessionId) throw new TypeError("恢复任务缺少 Codex 会话 ID");
     const cwd = await verifiedDirectory(value.cwd);
-    const thread = this.codex.resumeThread(sessionId, safeThreadOptions(cwd));
-    return consumeThread(thread, remotePrompt(value.prompt), {
-      signal: value.signal,
-      onThreadStarted: value.onThreadStarted,
+    return this.#run("resume", value, async () => {
+      const input = remotePrompt(value.prompt);
+      if (this.desktop) {
+        try {
+          const result = await this.desktop.tryResume({
+            ...value, sessionId, cwd, input,
+            onDiagnostic: (entry) => this.#diagnostic(entry),
+          });
+          if (result) return result;
+        } catch (error) {
+          error.route = "desktop";
+          throw error;
+        }
+      }
+      const thread = (await this.#client()).resumeThread(sessionId, safeThreadOptions(cwd));
+      return consumeThread(thread, input, {
+        signal: value.signal,
+        onThreadStarted: value.onThreadStarted,
+      });
     });
   }
 }

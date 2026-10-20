@@ -498,7 +498,7 @@ test("SSE starts with a complete snapshot", async (t) => {
   assert.match(text, /"tasks"/);
 });
 
-test("task API retains completed turns while a newer turn is running", async (t) => {
+test("task API auto-reads completed turns when a new question arrives and retains their history", async (t) => {
   const { root, file } = await fixture();
   t.after(() => rm(root, { recursive: true, force: true }));
   const collector = new CodexActivityCollector({
@@ -529,7 +529,7 @@ test("task API retains completed turns while a newer turn is running", async (t)
   await collector.scanOnce();
   assert.deepEqual(
     collector.getTasks().map((task) => task.status).sort(),
-    ["completed", "running"],
+    ["running"],
   );
 
   const api = createCollectorServer(collector, { host: "127.0.0.1", port: 0 });
@@ -538,7 +538,7 @@ test("task API retains completed turns while a newer turn is running", async (t)
   const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/tasks`);
   assert.equal(response.status, 200);
   const body = await response.json();
-  assert.equal(body.tasks.length, 2);
+  assert.equal(body.tasks.length, 1);
   assert.equal(body.tasks.some((task) => task.status === "idle"), false);
 
   const taskResponse = await fetch(
@@ -547,21 +547,11 @@ test("task API retains completed turns while a newer turn is running", async (t)
   assert.equal(taskResponse.status, 200);
   assert.equal((await taskResponse.json()).task.taskId, body.tasks[0].taskId);
 
-  const completed = body.tasks.find((task) => task.status === "completed");
-  const dismissResponse = await fetch(
-    `http://127.0.0.1:${address.port}/api/v1/tasks/${encodeURIComponent(completed.taskId)}/dismiss`,
-    { method: "POST" },
-  );
-  assert.equal(dismissResponse.status, 200);
-  const afterDismiss = await (
-    await fetch(`http://127.0.0.1:${address.port}/api/v1/tasks`)
-  ).json();
-  assert.deepEqual(afterDismiss.tasks.map((task) => task.status), ["running"]);
-
   const history = await (
     await fetch(`http://127.0.0.1:${address.port}/api/v1/tasks?scope=all`)
   ).json();
   assert.equal(history.tasks.length, 2);
+  assert.equal(history.tasks.find((task) => task.status === "completed").latestResponse, "answer one");
 });
 
 test("historical terminal tasks are hidden from the default working set", async (t) => {
@@ -874,17 +864,19 @@ test("acknowledge-all removes terminal tasks atomically and persists across rest
       "event_msg",
       { type: "task_complete", turn_id: "turn-1", last_agent_message: "first answer" },
       "2026-08-01T13:12:00.000Z",
-    ) +
-      line(
-        "event_msg",
-        { type: "task_started", turn_id: "turn-2" },
-        "2026-08-01T13:13:00.000Z",
-      ) +
-      line(
-        "event_msg",
-        { type: "user_message", message: "second question" },
-        "2026-08-01T13:13:00.100Z",
-      ),
+    ),
+    "utf8",
+  );
+  await writeFile(
+    path.join(path.dirname(file), "rollout-session-2.jsonl"),
+    line("session_meta", { id: "session-2", cwd: root, thread_source: "user" }, "2026-08-01T13:13:00.000Z")
+      + line("event_msg", { type: "task_started", turn_id: "turn-2" }, "2026-08-01T13:13:00.000Z")
+      + line("event_msg", {
+        type: "item_completed",
+        thread_id: "session-2",
+        turn_id: "turn-2",
+        item: { type: "UserMessage", content: [{ type: "text", text: "another chat's question" }] },
+      }, "2026-08-01T13:13:00.100Z"),
     "utf8",
   );
   await collector.scanOnce();

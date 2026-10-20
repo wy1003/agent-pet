@@ -47,7 +47,7 @@ export function cleanUserText(value) {
 
   // Desktop messages with attachments wrap the actual prompt after this
   // marker. Prefer the explicit request and discard generated file metadata.
-  const requestMarker = /(?:^|\n)## My request for Codex:\s*(?:\n|$)/i;
+  const requestMarker = /(?:^|\n)## My request(?: for Codex)?:\s*(?:\n|$)/i;
   const requestMatch = requestMarker.exec(text);
   if (requestMatch) text = text.slice(requestMatch.index + requestMatch[0].length);
 

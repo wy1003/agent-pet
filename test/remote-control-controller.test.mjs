@@ -68,6 +68,23 @@ async function waitFor(predicate, timeout = 1_000) {
   throw new Error("timed out");
 }
 
+test("uncertain Desktop submission reports verification needed without claiming failure or retrying", async (t) => {
+  let attempts = 0;
+  const { controller, registry, replies } = await fixture(t, {
+    resume: async () => {
+      attempts += 1;
+      throw Object.assign(new Error("未能确认桌面端提交结果，请先检查该会话，避免重复发送"), {
+        code: "codex_desktop_submission_unconfirmed",
+      });
+    },
+  });
+  await controller.handleInbound(inbound("desktop-uncertain", "/S0001 收到"));
+  await waitFor(() => replies.some((value) => value.includes("执行状态待确认")));
+  assert.equal(attempts, 1);
+  assert.equal(registry.resolveSession("S0001").status, "unknown");
+  assert.doesNotMatch(replies.at(-1), /远程任务执行失败|未生成回复|\/S0001 重试/);
+});
+
 test("controller resumes the exact session selected by a legacy C slash command", async (t) => {
   let resumed;
   const { controller, replies } = await fixture(t, {
@@ -85,7 +102,7 @@ test("controller resumes the exact session selected by a legacy C slash command"
   assert.equal(resumed.sessionId, "session-1");
   assert.equal(resumed.prompt, "把设置页简化");
   assert.deepEqual(replies, [
-    "Agent Pet · 已提交\n会话：/S0001",
+    "Agent Pet · 已接收\n会话：/S0001\n等待提交到 Codex。",
     "Agent Pet · 已完成\n结果摘要：已经改好了\n\n继续处理此任务：\n/S0001 你的要求",
   ]);
 });
@@ -342,6 +359,23 @@ test("retry is rejected for a completed session", async (t) => {
   assert.equal(result.reason, "retry_not_available");
   assert.equal(dispatches, 0);
   assert.ok(replies.some((value) => value.includes("当前任务无需重试")));
+});
+
+test("a timeout before turn startup does not claim delivery or suggest retrying a missing request", async (t) => {
+  const { controller, replies } = await fixture(t, {
+    resume: async () => {
+      const error = new Error("request timed out");
+      error.code = "codex_response_timeout";
+      error.turnStarted = false;
+      throw error;
+    },
+  });
+  await controller.handleInbound(inbound(63, "/S0001 只回复收到"));
+  await waitFor(() => replies.some((value) => value.includes("Codex 连接超时")));
+  const failure = replies.at(-1);
+  assert.match(failure, /尚未确认请求写入/);
+  assert.match(failure, /重新发送原指令/);
+  assert.doesNotMatch(failure, /消息已经写入|重新打开|\/S0001 重试/);
 });
 
 test("a continuation waits for a newly-created remote session to finish", async (t) => {

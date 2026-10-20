@@ -698,13 +698,13 @@ export class RemoteControlController {
     const position = lane.items.length + (lane.running ? 1 : 0);
     await this.#reply(remoteReply(
       job.kind === "new"
-        ? "新任务已提交"
+        ? "新任务已接收"
         : job.kind === "retry"
-          ? "恢复请求已提交"
-          : "已提交",
+          ? "恢复请求已接收"
+          : "已接收",
       job,
       [
-      position > 1 ? `当前排队位置：${position}` : "",
+        position > 1 ? `当前排队位置：${position}` : "等待提交到 Codex。",
       ],
     ), job.inbound, {
       kind: job.kind === "new"
@@ -759,9 +759,13 @@ export class RemoteControlController {
           await this.#execute(job, controller, lane);
         } catch (error) {
           const responseTimedOut = isCodexResponseTimeout(error);
-          const terminalStatus = isAbortError(error) || responseTimedOut
-            ? "interrupted"
-            : "failed";
+          const desktopUnconfirmed = [
+            "codex_desktop_submission_unconfirmed",
+            "codex_desktop_result_unconfirmed",
+            "codex_desktop_stop_unconfirmed",
+          ].includes(error?.code);
+          const terminalStatus = desktopUnconfirmed ? "unknown"
+            : isAbortError(error) || responseTimedOut ? "interrupted" : "failed";
           await this.#persistSessionStatus(job, terminalStatus).catch((statusError) => {
             this.logger.warn?.("[remote-control] unable to persist terminal status", statusError);
           });
@@ -773,14 +777,24 @@ export class RemoteControlController {
                 sessionCode: job.sessionCode,
               });
             }
+          } else if (desktopUnconfirmed) {
+            await this.#reply(remoteReply("执行状态待确认", job, [
+              error.message,
+            ]), job.inbound, {
+              kind: "task.unconfirmed",
+              projectCode: job.projectCode,
+              sessionCode: job.sessionCode,
+            });
           } else if (responseTimedOut) {
             this.logger.warn?.("[remote-control] Codex response timed out", error);
-            await this.#reply(remoteReply("Codex 回复超时", job, [
+            await this.#reply(remoteReply(error?.turnStarted ? "Codex 回复超时" : "Codex 连接超时", job, [
               error?.turnStarted
                 ? "你的消息已经写入 Codex 会话，但本次模型连接超时，未生成回复。"
-                : "连接 Codex 时超时，本次请求未确认完成。",
-              "电脑端若暂时看不到，请重新打开该会话。",
-              job.sessionCode ? `重试：/${job.sessionCode} 重试` : "",
+                : "尚未确认请求写入 Codex，请先在电脑端检查该会话。",
+              error?.turnStarted
+                ? "电脑端若暂时看不到，请重新打开该会话。"
+                : "若没有这条请求，请重新发送原指令；若已经写入，请检查结果后再决定是否重试。",
+              error?.turnStarted && job.sessionCode ? `重试：/${job.sessionCode} 重试` : "",
             ]), job.inbound, {
               kind: "task.response_timeout",
               projectCode: job.projectCode,
@@ -789,7 +803,11 @@ export class RemoteControlController {
           } else {
             this.logger.warn?.("[remote-control] Codex job failed", error);
             await this.#reply(remoteReply("远程任务执行失败", job, [
-              `原因：${compact(error?.message || "未知错误", 500)}`,
+              error?.code === "codex_history_incompatible"
+                ? "当前 Codex 内核无法读取此会话的新版历史，请更新 Codex 或检查本机内核配置。"
+                : error?.code === "codex_thread_busy"
+                  ? "此会话仍由另一个 Codex 进程占用，请在电脑端释放该会话后重新发送原指令。"
+                  : `原因：${compact(error?.message || "未知错误", 500)}`,
             ]), job.inbound, {
               kind: "task.failed",
               projectCode: job.projectCode,

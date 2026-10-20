@@ -92,6 +92,38 @@ test("remote task registry preserves projectless conversation classification", a
   assert.equal(registry.listSessions().length, 1);
 });
 
+test("collector session updates preserve execution status after task updates", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agent-pet-routes-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filePath = path.join(directory, "registry.json");
+  const registry = new RemoteTaskRegistry(filePath);
+  await registry.load();
+  const base = {
+    sessionId: "collector-session",
+    projectName: "Agent Pet",
+    cwd: directory,
+    title: "检查任务状态",
+  };
+  for (const [executionStatus, status] of [
+    ["in_progress", "running"],
+    ["waiting_input", "needs_input"],
+    ["completed", "completed"],
+    ["failed", "failed"],
+    ["interrupted", "interrupted"],
+    ["unknown", "unknown"],
+  ]) {
+    await registry.observeTask({ ...base, taskId: "collector-turn", status });
+    // The live collector emits task.updated followed by session.updated.
+    await registry.observeSession({ ...base, status: { executionStatus } });
+    assert.equal(registry.resolveSessionById(base.sessionId).status, status);
+    await registry.observeSession({ ...base, title: "更新标题" });
+    assert.equal(registry.resolveSessionById(base.sessionId).status, status);
+  }
+  const restarted = new RemoteTaskRegistry(filePath);
+  await restarted.load();
+  assert.equal(restarted.resolveSession("S0001").status, "unknown");
+});
+
 test("remote task registry uses channel-scoped delivery mappings", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "agent-pet-routes-"));
   t.after(() => rm(directory, { recursive: true, force: true }));

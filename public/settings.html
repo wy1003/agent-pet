@@ -492,7 +492,7 @@
             <div class="pet-library-heading">
               <div>
                 <h3 id="pet-library-title">宠物库</h3>
-                <p>导入的宠物会复制到应用自己的目录，原压缩包移动或删除后仍可使用。</p>
+                <p>导入后自动保存到应用目录，原 ZIP 移动或删除后仍可使用。</p>
               </div>
               <button id="open-pet-library" class="secondary-button compact-button" type="button">打开目录</button>
             </div>
@@ -502,10 +502,27 @@
                 <option value="builtin-default">小团（内置默认）</option>
               </select>
             </label>
+            <div class="pet-download-source">
+              <div class="pet-download-heading">
+                <strong>下载新宠物</strong>
+                <a id="open-pet-downloads" class="pet-download-link" href="https://codex-pets.net/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开 Codex Pets">
+                  codex-pets.net <span aria-hidden="true">↗</span>
+                </a>
+              </div>
+              <p>在 Codex Pets 下载 ZIP，无需解压即可拖入。</p>
+            </div>
             <div id="pet-zip-drop" class="pet-zip-drop" tabindex="0" role="button" aria-label="拖入或选择宠物 ZIP 压缩包">
               <strong>把宠物 ZIP 压缩包拖到这里</strong>
-              <small>支持 Codex 原生精灵表包，以及 Agent Pet 逐状态 GIF 包；最多 50 MB。</small>
+              <small>支持 Codex 精灵表 / Agent Pet 状态 GIF · ZIP 最大 50 MB</small>
               <button id="import-pet-zip" class="secondary-button compact-button" type="button">选择 ZIP</button>
+            </div>
+            <div class="pet-conversion-help">
+              <div class="pet-conversion-heading">
+                <strong>从其他网站下载的宠物？</strong>
+                <button id="copy-pet-conversion-prompt" class="secondary-button compact-button" type="button">复制转换说明</button>
+              </div>
+              <p>格式不兼容时，把压缩包和转换说明一起发给 AI，转成可用的 ZIP 后再拖入。</p>
+              <p id="pet-import-help-status" class="pet-import-help-status" role="status" hidden></p>
             </div>
             <div class="pet-library-footer">
               <p id="pet-library-status" class="pet-library-status" role="status">正在读取宠物库…</p>

@@ -418,6 +418,32 @@ function userMessage(session, payload, timestamp) {
   touch(session, timestamp);
 }
 
+function completedUserMessage(session, payload, timestamp) {
+  if (payload.item?.type !== "UserMessage") return;
+  if (payload.thread_id && String(payload.thread_id) !== session.sessionId) return;
+  const turnId = String(payload.turn_id || session.activeTurnId || "");
+  const text = cleanUserText(payload.item.content);
+  if (!turnId || !text) return;
+
+  // Typed items identify their turn explicitly. Do not use the pending-message
+  // heuristic here: another user item can belong to the same running turn.
+  const turn = ensureTurn(session, turnId, timestamp);
+  if (turn.userText === text) return;
+  turn.userText = text;
+  turn.submittedAt ||= timestamp;
+  // Late items can fill in a completed turn without reopening it or changing
+  // the current turn's phase, latest question, or activity clock.
+  if (!turn.completedAt) turn.lastActivityAt = timestamp;
+  if (session.activeTurnId === turnId || (!session.activeTurnId && !turn.completedAt)) {
+    session.latestUserText = text;
+    if (session.titleSource === "fallback") {
+      session.title = makeTitle(text);
+      session.titleSource = "derived-user-message";
+    }
+    touch(session, timestamp);
+  }
+}
+
 function turnContext(session, payload, timestamp) {
   const turnId = String(payload.turn_id || "");
   if (!turnId || turnId !== session.activeTurnId) return;
@@ -478,6 +504,9 @@ export function applyRecord(session, record) {
         break;
       case "turn_aborted":
         lifecycleAbort(session, payload, timestamp);
+        break;
+      case "item_completed":
+        completedUserMessage(session, payload, timestamp);
         break;
       case "user_message":
         userMessage(session, payload, timestamp);

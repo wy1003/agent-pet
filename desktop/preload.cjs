@@ -88,6 +88,8 @@ contextBridge.exposeInMainWorld("companion", {
   removeVoice: (id) => ipcRenderer.invoke("voice-library:remove", id),
   getPathForFile: (file) => webUtils.getPathForFile(file),
   getPetLibrary: () => ipcRenderer.invoke("pet-library:list"),
+  openPetDownloads: () => ipcRenderer.invoke("pet-library:open-downloads"),
+  copyPetConversionPrompt: () => ipcRenderer.invoke("pet-library:copy-conversion-prompt"),
   selectPetZip: () => ipcRenderer.invoke("pet-library:select-zip"),
   importPetZip: (filePath) => ipcRenderer.invoke("pet-library:import-zip", filePath),
   selectPet: (id) => ipcRenderer.invoke("pet-library:select", id),

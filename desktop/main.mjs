@@ -39,6 +39,7 @@ import { RemoteNotificationQueue } from "./remote-notification-queue.mjs";
 import { RemoteChannelHub } from "./remote-channel-hub.mjs";
 import { RemoteTaskRegistry } from "./remote-task-registry.mjs";
 import { CodexRemoteExecutor } from "./codex-remote-executor.mjs";
+import { CodexDesktopExecutor } from "./codex-desktop-executor.mjs";
 import { RemoteControlController } from "./remote-control-controller.mjs";
 import { SecureCredentials } from "./secure-credentials.mjs";
 import { WeixinRemoteService } from "./weixin-remote-service.mjs";
@@ -54,6 +55,7 @@ import {
   resolveAvailablePetState,
 } from "./pet/pet-state-controller.mjs";
 import { PetLibrary } from "./pet/pet-library.mjs";
+import { PET_DOWNLOAD_URL, petConversionPrompt } from "./pet/pet-import-help.mjs";
 import { PET_ANIMATION_PROFILE } from "./pet/pet-animation-profile.mjs";
 import { PET_DRAG_PROFILE } from "./pet/pet-drag-profile.mjs";
 import {
@@ -2130,6 +2132,16 @@ function installIpcHandlers() {
     requireTrustedSender(event);
     return petLibraryState();
   });
+  ipcMain.handle("pet-library:open-downloads", async (event) => {
+    requireSettingsMainFrame(event);
+    await shell.openExternal(PET_DOWNLOAD_URL);
+    return { ok: true };
+  });
+  ipcMain.handle("pet-library:copy-conversion-prompt", (event) => {
+    requireSettingsMainFrame(event);
+    clipboard.writeText(petConversionPrompt());
+    return { ok: true };
+  });
   ipcMain.handle("pet-library:select-zip", async (event) => {
     requireTrustedSender(event);
     const result = await dialog.showOpenDialog(settingsWindow || BrowserWindow.getFocusedWindow(), {
@@ -2398,7 +2410,23 @@ if (!hasSingleInstanceLock) {
       });
       const preferences = await preferenceStore.load();
       activateAgentProvider(preferences);
-      remoteCodexExecutor = new CodexRemoteExecutor();
+      remoteCodexExecutor = new CodexRemoteExecutor({
+        desktop: process.platform === "win32" ? new CodexDesktopExecutor({
+          getTask: async (taskId, signal) => {
+            const response = await fetch(`${serviceUrl}/api/v1/tasks/${encodeURIComponent(taskId)}`, {
+              signal: AbortSignal.any([signal || new AbortController().signal, AbortSignal.timeout(5_000)]),
+            });
+            if (response.status === 404) return null;
+            if (!response.ok) throw new Error(`读取 Codex 轮次失败：${response.status}`);
+            return (await response.json()).task;
+          },
+        }) : null,
+        onDiagnostic: async (entry) => {
+          const diagnosticPath = path.join(managedRootPath(), "remote-control", "last-execution-diagnostic.json");
+          await mkdir(path.dirname(diagnosticPath), { recursive: true });
+          await writeFile(diagnosticPath, JSON.stringify({ timestamp: new Date().toISOString(), ...entry }, null, 2), "utf8");
+        },
+      });
       remoteChannelHub = new RemoteChannelHub();
       weixinChannelAdapter = createWeixinChannelAdapter({
         service: weixinRemoteService,

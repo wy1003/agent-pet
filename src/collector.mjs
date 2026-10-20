@@ -103,6 +103,10 @@ function taskActivityTime(task) {
   return Date.parse(task.lastActivityAt || task.submittedAt || 0) || 0;
 }
 
+function taskSubmissionTime(task) {
+  return Date.parse(task.submittedAt || task.startedAt || 0) || 0;
+}
+
 function userFacingTaskSnapshots(session) {
   return sessionTaskSnapshots(session).filter((task) => (
     String(task.question || "").trim() || ACTIVE_TASK_STATUSES.has(task.status)
@@ -646,6 +650,23 @@ export class CodexActivityCollector extends EventEmitter {
       const tasks = this.includeSubagents || session.threadSource !== "subagent"
         ? userFacingTaskSnapshots(session)
         : [];
+      // Continuing a conversation acknowledges its earlier finished turns.
+      // Require a user question so internal lifecycle-only work cannot clear
+      // reminders. Submission order also prevents a late old completion from
+      // acknowledging a newer task; equal timestamps follow rollout order.
+      const latestUserTask = tasks.reduce((latest, task) => {
+        if (!String(task.question || "").trim()) return latest;
+        return !latest || taskSubmissionTime(task) >= taskSubmissionTime(latest) ? task : latest;
+      }, null);
+      if (latestUserTask) {
+        for (const task of tasks) {
+          if (task === latestUserTask || !DISMISSIBLE_TASK_STATUSES.has(task.status)) continue;
+          if (this.visibleTaskIds.delete(task.taskId)) {
+            this.stateDirty = true;
+            this.emit("task.removed", { taskId: task.taskId, sessionId });
+          }
+        }
+      }
       const currentTaskIds = new Set(tasks.map((task) => task.taskId));
       const previousTaskIds = this.taskIdsBySession.get(sessionId) || new Set();
       for (const taskId of previousTaskIds) {

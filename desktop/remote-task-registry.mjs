@@ -24,6 +24,13 @@ function normalizedProjectKind(value) {
   return value === "projectless" ? "projectless" : "project";
 }
 
+function normalizedSessionStatus(value) {
+  const status = clean(value?.executionStatus || value?.execution || value?.state, 40);
+  if (status === "in_progress") return "running";
+  if (status === "waiting_input") return "needs_input";
+  return status;
+}
+
 function positiveInteger(value, fallback = 1) {
   const number = Number(value);
   return Number.isSafeInteger(number) && number > 0 ? number : fallback;
@@ -270,7 +277,9 @@ export class RemoteTaskRegistry {
       projectKind: projectResult.project.kind,
       cwd: clean(session.cwd, 2_000) || projectResult.project.cwd,
       title: clean(session.title || session.latestUserText, 160) || "未命名会话",
-      status: clean(session.status?.execution || session.status?.state, 40),
+      // Collector session.updated follows task.updated and uses executionStatus.
+      // Metadata-only observations must not erase the last known task state.
+      status: normalizedSessionStatus(session.status) || record?.status || "",
       updatedAt: clean(session.updatedAt, 50) || now,
     };
     if (!record) {

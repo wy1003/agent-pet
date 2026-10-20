@@ -576,7 +576,7 @@ h2 {
 
 .storage-path-button:not(:disabled):hover {
   border-color: color-mix(in srgb, var(--accent) 32%, var(--line));
-  background: color-mix(in srgb, var(--accent-soft) 42%, var(--card));
+  background: color-mix(in srgb, var(--accent-soft) 42%, transparent);
 }
 
 .storage-path-button:disabled {
@@ -653,6 +653,71 @@ h2 {
   width: 100%;
 }
 
+.pet-download-source {
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent-soft) 28%, var(--card));
+}
+
+.pet-download-source strong,
+.pet-conversion-heading strong {
+  font-size: 12px;
+}
+
+.pet-download-source p,
+.pet-conversion-help p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.pet-download-link {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 5px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line));
+  border-radius: 8px;
+  color: var(--accent);
+  background: var(--card);
+  font-size: 11px;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.pet-download-link:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.pet-conversion-help {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.pet-download-heading,
+.pet-conversion-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pet-conversion-help .pet-import-help-status[data-state="success"] {
+  color: var(--accent);
+}
+
+.pet-conversion-help .pet-import-help-status[data-state="error"] {
+  color: var(--danger);
+}
+
 .pet-zip-drop {
   display: grid;
   min-height: 118px;
@@ -661,7 +726,7 @@ h2 {
   padding: 18px;
   border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--line));
   border-radius: 12px;
-  background: color-mix(in srgb, var(--accent-soft) 42%, transparent);
+  background: color-mix(in srgb, var(--accent-soft) 42%, var(--card));
   text-align: center;
   outline: none;
   transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;

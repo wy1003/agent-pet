@@ -66,6 +66,9 @@ const importPetZipButton = document.querySelector("#import-pet-zip");
 const removePetButton = document.querySelector("#remove-pet");
 const openPetLibraryButton = document.querySelector("#open-pet-library");
 const petLibraryStatus = document.querySelector("#pet-library-status");
+const petDownloadLink = document.querySelector("#open-pet-downloads");
+const copyPetConversionButton = document.querySelector("#copy-pet-conversion-prompt");
+const petImportHelpStatus = document.querySelector("#pet-import-help-status");
 const weixinServiceCard = document.querySelector("#weixin-service-card");
 const weixinConnectionStatus = document.querySelector("#weixin-connection-status");
 const weixinConnectionDescription = document.querySelector("#weixin-connection-description");
@@ -1010,6 +1013,34 @@ async function initialize() {
     setStatus("error", "读取失败");
   }
 }
+
+function setPetImportHelpStatus(state, message) {
+  petImportHelpStatus.hidden = !message;
+  petImportHelpStatus.dataset.state = state;
+  petImportHelpStatus.textContent = message;
+}
+
+petDownloadLink.addEventListener("click", async (event) => {
+  event.preventDefault();
+  try {
+    await window.companion.openPetDownloads();
+    setPetImportHelpStatus("success", "已在默认浏览器中打开宠物下载网站。");
+  } catch (error) {
+    setPetImportHelpStatus("error", `无法打开网站，请在浏览器中访问 codex-pets.net：${error.message || "请稍后重试"}`);
+  }
+});
+
+copyPetConversionButton.addEventListener("click", async () => {
+  copyPetConversionButton.disabled = true;
+  try {
+    await window.companion.copyPetConversionPrompt();
+    setPetImportHelpStatus("success", "转换说明已复制，请连同宠物压缩包一起发给 AI。");
+  } catch (error) {
+    setPetImportHelpStatus("error", `复制失败：${error.message || "请稍后重试"}`);
+  } finally {
+    copyPetConversionButton.disabled = false;
+  }
+});
 
 importPetZipButton.addEventListener("click", async (event) => {
   event.stopPropagation();

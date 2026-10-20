@@ -7,6 +7,9 @@ import { NotificationOrchestrator } from "../desktop/notification-orchestrator.m
 import { RemoteControlController } from "../desktop/remote-control-controller.mjs";
 import { RemoteNotificationQueue } from "../desktop/remote-notification-queue.mjs";
 import { RemoteTaskRegistry } from "../desktop/remote-task-registry.mjs";
+import { CodexRemoteExecutor } from "../desktop/codex-remote-executor.mjs";
+import { applyRecord, createSession, sessionSnapshot, sessionTaskSnapshots } from "../src/model.mjs";
+import { parseRemoteRequest, REMOTE_REQUEST_ORIGIN } from "../src/remote-request.mjs";
 
 function preferences() {
   return {
@@ -188,4 +191,114 @@ test("an explicit session command resumes the exact registered Codex session onc
   assert.equal(resumes[0].sessionId, sessionId);
   assert.equal(resumes[0].cwd, directory);
   assert.equal(resumes[0].prompt, "补充重复消息保护测试");
+});
+
+test("a Weixin command waits for the desktop turn and reaches the SDK with typed remote origin intact", async (t) => {
+  const base = path.resolve(os.tmpdir());
+  const directory = await mkdtemp(path.join(base, "agent-pet-typed-remote-"));
+  const registry = new RemoteTaskRegistry(path.join(directory, "registry.json"));
+  await registry.load();
+  const session = createSession({
+    id: "typed-desktop-session",
+    cwd: directory,
+    originator: "Codex Desktop",
+    thread_source: "user",
+  }, "rollout.jsonl", new Date().toISOString());
+  function event(type, payload) {
+    applyRecord(session, {
+      type: "event_msg",
+      timestamp: new Date().toISOString(),
+      payload: { type, ...payload },
+    });
+  }
+  function userItem(turnId, text) {
+    event("item_completed", {
+      thread_id: session.sessionId,
+      turn_id: turnId,
+      item: { type: "UserMessage", id: `user-${turnId}`, content: [{ type: "text", text }] },
+    });
+  }
+  event("task_started", { turn_id: "desktop-turn" });
+  userItem("desktop-turn", "电脑端正在处理");
+  await registry.observeTask(sessionTaskSnapshots(session)[0]);
+  await registry.observeSession(sessionSnapshot(session));
+
+  const resumes = [];
+  const sdkInputs = [];
+  const replies = [];
+  const duplicateNotifications = [];
+  const remoteTasks = [];
+  const executor = new CodexRemoteExecutor({
+    codex: {
+      resumeThread(id, options) {
+        resumes.push({ id, options });
+        return {
+          id,
+          async runStreamed(input) {
+            sdkInputs.push(input);
+            event("task_started", { turn_id: "remote-turn" });
+            userItem("remote-turn", input);
+            remoteTasks.push(sessionTaskSnapshots(session).find((task) => task.turnId === "remote-turn"));
+            return {
+              events: (async function* () {
+                yield { type: "turn.started" };
+                yield { type: "item.completed", item: { type: "agent_message", text: "项目结构检查完成" } };
+                event("task_complete", { turn_id: "remote-turn", last_agent_message: "项目结构检查完成" });
+                remoteTasks.push(sessionTaskSnapshots(session).find((task) => task.turnId === "remote-turn"));
+                yield { type: "turn.completed", usage: {} };
+              }()),
+            };
+          },
+        };
+      },
+    },
+  });
+  const controller = new RemoteControlController({
+    registry,
+    executor,
+    sendReply: async (text) => replies.push(text),
+    getPolicy: () => ({ enabled: true }),
+    isAuthorizedSender: (value) => value === "bound-user",
+    pollMs: 10,
+  });
+  const notifier = new NotificationOrchestrator({
+    getPreferences: preferences,
+    phraseStore: { getPhrases: async () => ({ completed: ["完成"] }) },
+    voiceQueue: { enqueue: () => false, dropTask() {}, stop: async () => {} },
+    remoteQueue: {
+      enqueue: (item) => { duplicateNotifications.push(item); return true; },
+      dropTask() {},
+      stop: async () => {},
+    },
+  });
+  t.after(async () => {
+    await controller.stop();
+    await notifier.stop();
+    const resolved = path.resolve(directory);
+    assert.equal(path.dirname(resolved), base);
+    assert.ok(path.basename(resolved).startsWith("agent-pet-typed-remote-"));
+    await rm(resolved, { recursive: true, force: true });
+  });
+
+  const accepted = await controller.handleInbound(quotedInbound(
+    "typed-command", "/S0001 检查项目结构", "", "",
+  ));
+  assert.equal(accepted.queued, true);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(resumes.length, 0, "the desktop turn is still running");
+  assert.equal(registry.resolveSession("S0001").status, "running");
+
+  event("task_complete", { turn_id: "desktop-turn", last_agent_message: "电脑端已完成" });
+  await registry.observeTask(sessionTaskSnapshots(session)[0]);
+  await registry.observeSession(sessionSnapshot(session));
+  await waitFor(() => replies.some((text) => text.includes("项目结构检查完成")));
+  assert.equal(resumes.length, 1);
+  assert.equal(resumes[0].id, session.sessionId);
+  assert.equal(parseRemoteRequest(sdkInputs[0]).request, "检查项目结构");
+  assert.equal(remoteTasks[1].question, "检查项目结构");
+  assert.equal(remoteTasks[1].requestOrigin, REMOTE_REQUEST_ORIGIN);
+  assert.equal(remoteTasks[1].status, "completed");
+  notifier.seed([remoteTasks[0]]);
+  await notifier.handleTask(remoteTasks[1]);
+  assert.equal(duplicateNotifications.length, 0, "the controller already owns the remote reply");
 });

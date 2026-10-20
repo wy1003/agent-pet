@@ -243,3 +243,50 @@ test("Codex remote executor validates the working directory before starting Code
   );
   assert.equal(started, false);
 });
+
+test("remote execution resolves the Desktop runtime for each request and preserves SDK configuration", async () => {
+  let options;
+  let resolutions = 0;
+  const diagnostics = [];
+  const executor = new CodexRemoteExecutor({
+    codexOptions: { config: { model: "test-model" } },
+    resolveExecutable: async () => { resolutions += 1; return "desktop-codex.exe"; },
+    createCodex: (value) => {
+      options = value;
+      return { resumeThread: (id) => fakeThread(id, [{ type: "turn.completed" }]) };
+    },
+    onDiagnostic: (entry) => diagnostics.push(entry),
+  });
+  for (let i = 0; i < 2; i += 1) {
+    await executor.resume({ sessionId: "saved", cwd: os.tmpdir(), prompt: "test", signal: new AbortController().signal });
+  }
+  assert.equal(resolutions, 2);
+  assert.equal(options.codexPathOverride, "desktop-codex.exe");
+  assert.equal(options.config.model, "test-model");
+  assert.equal(diagnostics[0].executable, "desktop-codex.exe");
+});
+
+test("startup history and writer errors are not disguised by incidental timeout warnings", async () => {
+  for (const [message, code] of [
+    ["models request timed out; thread history projection expected ordinal 19, got 20", "codex_history_incompatible"],
+    ["request timed out; thread abc already has an active writer", "codex_thread_busy"],
+    ["request timed out", "codex_response_timeout"],
+  ]) {
+    const diagnostics = [];
+    const executor = new CodexRemoteExecutor({
+      codex: { resumeThread: () => fakeThread("saved", [{ type: "error", message }]) },
+      onDiagnostic: (entry) => { diagnostics.push(entry); throw new Error("diagnostic unavailable"); },
+    });
+    await assert.rejects(executor.resume({
+      sessionId: "saved", cwd: os.tmpdir(), prompt: "private prompt", signal: new AbortController().signal,
+    }), (error) => {
+      assert.equal(error.code, code);
+      assert.equal(error.turnStarted, false);
+      assert.equal(isCodexResponseTimeout(error), code === "codex_response_timeout");
+      return true;
+    });
+    assert.equal(diagnostics[0].code, code);
+    assert.equal(JSON.stringify(diagnostics).includes("private prompt"), false);
+    assert.equal(JSON.stringify(diagnostics).includes(message), false);
+  }
+});
