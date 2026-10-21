@@ -5,7 +5,7 @@ import {
 
 // S is the public session prefix. C remains accepted as a legacy alias so
 // commands copied from notifications sent before the migration still work.
-const FULL_ROUTE_PATTERN = /(^|[^A-Za-z0-9])((?:\/|／)?\s*(P0*\d{1,6})\s*[\/／]\s*([SC]0*\d{1,8}))\b/i;
+const FULL_ROUTE_PATTERN = /(^|[^A-Za-z0-9])((?:\/|／)?\s*(P0*\d{1,6})[\/／]([SC]0*\d{1,8}))\b/i;
 const SESSION_COMMAND_PATTERN = /(^|[^A-Za-z0-9])((?:\/|／)\s*([SC]0*\d{1,8}))\b/i;
 const PROJECT_PATTERN = /(^|[^A-Za-z0-9])((?:\/|／)?\s*(P0*\d{1,6}))\b/i;
 
@@ -15,28 +15,32 @@ function text(value, limit = 4_000) {
 
 export function extractRemoteRoute(value) {
   const source = text(value);
-  const full = source.match(FULL_ROUTE_PATTERN);
-  if (full) {
+  // Find the first route in textual order. Looking for any full route first
+  // would skip an earlier /S command and hide ambiguous multi-route input.
+  const patterns = [FULL_ROUTE_PATTERN, SESSION_COMMAND_PATTERN, PROJECT_PATTERN];
+  const matches = patterns.map((pattern) => source.match(pattern)).filter(Boolean);
+  matches.sort((left, right) => (left.index + left[1].length) - (right.index + right[1].length));
+  const match = matches[0];
+  if (!match) return null;
+  if (match[4]) {
     return {
-      projectCode: normalizeProjectCode(full[3]),
-      sessionCode: normalizeSessionCode(full[4]),
-      matchedText: full[2],
+      projectCode: normalizeProjectCode(match[3]),
+      sessionCode: normalizeSessionCode(match[4]),
+      matchedText: match[2],
     };
   }
-  const session = source.match(SESSION_COMMAND_PATTERN);
-  if (session) {
+  if (/^[SC]/i.test(match[3])) {
     return {
       projectCode: "",
-      sessionCode: normalizeSessionCode(session[3]),
-      matchedText: session[2],
+      sessionCode: normalizeSessionCode(match[3]),
+      matchedText: match[2],
     };
   }
-  const project = source.match(PROJECT_PATTERN);
-  return project ? {
-    projectCode: normalizeProjectCode(project[3]),
+  return {
+    projectCode: normalizeProjectCode(match[3]),
     sessionCode: "",
-    matchedText: project[2],
-  } : null;
+    matchedText: match[2],
+  };
 }
 
 function extractRemoteRoutes(value, limit = 3) {
@@ -116,7 +120,7 @@ export function parseRemoteCommand(value = {}) {
   const stopPattern = /^(?:停止|中止|取消)(?:任务|执行)?[。.!！?？]*$/i;
   const retryPattern = /^(?:重试|重新尝试|继续上次)(?:任务|请求)?[。.!！?？]*$/i;
   const newPattern = /^(?:新任务|新建任务|创建任务)/i;
-  const continuePattern = /^(?:继续|续问|接着)(?:任务)?/i;
+  const continuePattern = /^(?:继续|续问|接着)(?:任务)?(?=$|[\s:：，,])/i;
 
   if (statusPattern.test(body)) {
     return {
@@ -145,7 +149,7 @@ export function parseRemoteCommand(value = {}) {
       routeSource: inlineRoute ? "explicit" : (referenceRoute ? "reference" : "none"),
     };
   }
-  if (newPattern.test(body)) {
+  if (!route?.sessionCode && newPattern.test(body)) {
     return {
       action: "new",
       projectCode: route?.projectCode || "",

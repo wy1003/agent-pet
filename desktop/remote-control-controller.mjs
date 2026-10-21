@@ -342,7 +342,7 @@ export class RemoteControlController {
     if (!projectCode && sessionCode) {
       projectCode = this.registry.resolveSession(sessionCode)?.projectCode || "";
     }
-    if (!projectCode) {
+    if (!projectCode && !sessionCode) {
       await this.#reply(remoteReply(
         "缺少项目编号",
         {},
@@ -393,7 +393,7 @@ export class RemoteControlController {
         await this.#reply(remoteReply(
           "缺少任务要求",
           { projectCode },
-          [`请使用“${projectCode} 新任务：具体要求”。`],
+          [`请使用“/${projectCode} 新任务：具体要求”。`],
         ), inbound, { kind: "command.invalid", projectCode });
         return { ok: false, reason: "prompt_required" };
       }

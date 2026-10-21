@@ -41,7 +41,7 @@ test("remote command parser normalizes legacy C session routes to S", () => {
     sessionCode: "S0022",
     matchedText: "P1/C22",
   });
-  assert.deepEqual(parseRemoteCommand({ text: "/C7 继续旧会话" }), {
+  assert.deepEqual(parseRemoteCommand({ text: "/C7 继续：旧会话" }), {
     action: "continue",
     projectCode: "",
     sessionCode: "S0007",
