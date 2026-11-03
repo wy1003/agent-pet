@@ -31,10 +31,20 @@ import {
   defaultIgnoredProjectPaths,
 } from "../src/internal-projects.mjs";
 import { createCollectorServer } from "../src/server.mjs";
-import { CodexCopywriter } from "./codex-copywriter.mjs";
+import { PhrasePoolGenerator } from "./phrase-generator.mjs";
+import { AiTextService } from "./ai/text-service.mjs";
+import { CodexTextProvider } from "./ai/codex-provider.mjs";
+import { HttpTextProvider } from "./ai/http-provider.mjs";
+import { AiSettingsController, installAiSettingsIpc } from "./ai/settings-controller.mjs";
 import { DailyReportGenerator } from "./daily-report.mjs";
 import { NotificationOrchestrator } from "./notification-orchestrator.mjs";
 import { NotificationHistoryStore } from "./notification-history.mjs";
+import { NotebookStore } from "./notebook/notebook-store.mjs";
+import { createDesktopBackgroundSource } from "./notebook/desktop-background-source.mjs";
+import { createNotebookController } from "./notebook/notebook-controller.mjs";
+import { createNotebookTools } from "./notebook/mcp/notebook-tools.mjs";
+import { NotebookMcpBridge, notebookMcpConfig } from "./notebook/mcp/bridge-service.mjs";
+import { NotebookCodexConnection, installNotebookConnectionIpc } from "./notebook/mcp/codex-connection.mjs";
 import { RemoteNotificationQueue } from "./remote-notification-queue.mjs";
 import { RemoteChannelHub } from "./remote-channel-hub.mjs";
 import { RemoteTaskRegistry } from "./remote-task-registry.mjs";
@@ -83,9 +93,6 @@ import {
 import {
   badgeBoundsForDrag,
   clampWindowBounds,
-  panelBoundsNearBadge,
-  panelVerticalAlignment,
-  usageCardBoundsNearBadge,
 } from "./window-layout.mjs";
 import {
   LEGACY_MANAGED_DATA_DIRECTORY,
@@ -106,6 +113,18 @@ import { resolveAppRuntime } from "./app-runtime.mjs";
 import { UsageProviderRegistry } from "./usage/usage-provider-registry.mjs";
 import { CodexUsageProvider } from "./usage/codex-usage-provider.mjs";
 import { AgentProviderRegistry } from "./agents/agent-provider-registry.mjs";
+
+import { PetWindowFacade } from "./windows/pet-window.mjs";
+import { PetMenuWindowFacade } from "./windows/pet-menu-window.mjs";
+import { PetMenuController, installPetMenuIpc } from "./windows/pet-menu-controller.mjs";
+import { TaskWindowFacade } from "./windows/task-window.mjs";
+import { UsageWindowFacade } from "./windows/usage-window.mjs";
+import { NotebookWindowFacade } from "./windows/notebook-window.mjs";
+import { NotebookWindowController, installNotebookWindowIpc } from "./windows/notebook-window-controller.mjs";
+import { SettingsWindowFacade } from "./windows/settings-window.mjs";
+import { DailyReportWindowFacade } from "./windows/daily-report-window.mjs";
+import { SpeechWindowFacade } from "./windows/speech-window.mjs";
+import { CompanionWindowCoordinator } from "./windows/companion-window-coordinator.mjs";
 
 const { autoUpdater } = electronUpdater;
 
@@ -130,18 +149,6 @@ for (const outputStream of [process.stdout, process.stderr]) {
 const PRELOAD_PATH = path.join(HERE, "preload.cjs");
 const BUILD_ICON_PATH = path.resolve(HERE, "..", "build", "icon.png");
 const DEFAULT_SERVICE_URL = "http://127.0.0.1:43123";
-const PANEL_WIDTH = 350;
-const PANEL_HEIGHT = 380;
-const PANEL_MIN_HEIGHT = 58;
-const USAGE_CARD_WIDTH = 314;
-const USAGE_CARD_HEIGHT = 150;
-const USAGE_CARD_MIN_HEIGHT = 118;
-const USAGE_CARD_MAX_HEIGHT = 300;
-const SETTINGS_WIDTH = 620;
-const SETTINGS_HEIGHT = 760;
-const DAILY_REPORT_WIDTH = 500;
-const DAILY_REPORT_HEIGHT = 560;
-const PANEL_IDLE_RELEASE_MS = 30_000;
 const SPEECH_IDLE_RELEASE_MS = 60_000;
 const GPT_SOVITS_IDLE_RELEASE_MS = 60_000;
 const INITIAL_PET_REVEAL_TIMEOUT_MS = 6_000;
@@ -164,15 +171,6 @@ protocol.registerSchemesAsPrivileged([{
   privileges: { standard: true, secure: true, supportFetchAPI: true },
 }]);
 
-let badgeWindow = null;
-let panelWindow = null;
-let panelWindowsPromise = null;
-let panelIdleTimer = null;
-let usageWindow = null;
-let panelVisibleItemCount = 0;
-let settingsWindow = null;
-let dailyReportWindow = null;
-let speechWindow = null;
 let speechWindowPromise = null;
 let speechIdleTimer = null;
 let tray = null;
@@ -183,6 +181,8 @@ let collectorReadyPromise = Promise.resolve();
 let quitting = false;
 let shutdownStarted = false;
 let savePositionTimer = null;
+let positionSaveQueue = Promise.resolve();
+let desktopWindowsReady = false;
 let loadedWindowState = {};
 let badgeDrag = null;
 let badgeInertiaTimer = null;
@@ -199,6 +199,8 @@ let gptSovitsService = null;
 let gptSovitsIdleTimer = null;
 let phrasePoolStore = null;
 let codexCopywriter = null;
+let aiTextService = null;
+let aiSettingsController = null;
 let dailyReportGenerator = null;
 let taskEventClient = null;
 let notificationOrchestrator = null;
@@ -217,10 +219,105 @@ let usageProviderRegistry = null;
 let agentProviderRegistry = null;
 let loadedNotificationVoiceSignature = "";
 let managedDataRoot = null;
+let notebookStore = null;
+let notebookMcpBridge = null;
 let speechRequestSerial = 0;
 let speechCapabilities = { supported: false, voices: [] };
 let resolveSpeechReady = null;
 const pendingSpeechRequests = new Map();
+
+// Composition root: window modules own native windows; callers use their facades.
+const windowDependencies = {
+  createWindow: (options) => new BrowserWindow(options),
+  preload: PRELOAD_PATH,
+  getServiceUrl: () => serviceUrl,
+  getPreferences: () => preferenceStore.get(),
+  getWorkArea: () => badgeWindow.getBounds()
+    ? workAreaForBounds(badgeWindow.getBounds()) : screen.getPrimaryDisplay().workArea,
+  isQuitting: () => quitting,
+  productName: PRODUCT_NAME,
+  getIcon: () => createAgentPetIcon(256),
+  isDark: () => nativeTheme.shouldUseDarkColors,
+};
+const badgeWindow = new PetWindowFacade({
+  ...windowDependencies,
+  getInitialBounds: () => restorePetWindowBounds(
+    loadedWindowState, screen.getAllDisplays(), screen.getPrimaryDisplay(),
+    petWindowSize(preferenceStore.get().appearance.pet.width, 4),
+  ),
+  onCreated: () => {
+    badgeInitialRevealPending = true;
+    captureBadgeWindowSizeLock();
+  },
+  onResize: () => {
+    if (!correctingBadgeWindowSize) setImmediate(enforceBadgeWindowSizeLock);
+  },
+  onMoved: () => { companionWindows.position(); schedulePositionSave(); },
+  onVisibilityChanged: rebuildTrayMenu,
+});
+const popoverDependencies = {
+  ...windowDependencies,
+  onBlur: () => companionWindows.hideWhenFocusLeaves(),
+  onHide: () => companionWindows.hide(),
+  onResize: () => companionWindows.position(),
+};
+const panelWindow = new TaskWindowFacade(popoverDependencies);
+const usageWindow = new UsageWindowFacade(popoverDependencies);
+const notebookBackgroundSource = createDesktopBackgroundSource();
+const notebookWindow = new NotebookWindowFacade({
+  ...windowDependencies,
+  getWorkArea: () => screen.getPrimaryDisplay().workArea,
+  onHide: () => setNotebookVisible(false).catch((error) => console.error("[notebook] hide failed", error)),
+  onMoved: schedulePositionSave,
+  onBlur: () => notebookWindows.finishDrag(true),
+  getBackgroundSource: viewport => notebookBackgroundSource.get(viewport),
+  toScreenRect: bounds => process.platform === "win32" ? screen.dipToScreenRect(null, bounds) : bounds,
+});
+const notebookWindows = new NotebookWindowController({
+  window: notebookWindow,
+  getPreferences: () => preferenceStore.get(),
+  getSavedBounds: () => loadedWindowState.notebookBounds,
+  getSavedState: () => loadedWindowState.notebookState,
+  getCursorPoint: () => screen.getCursorScreenPoint(),
+  onStateChanged: schedulePositionSave,
+  getWorkArea: (bounds) => bounds ? workAreaForBounds({ width: 380, height: 460, ...bounds }) : screen.getPrimaryDisplay().workArea,
+  isQuitting: () => quitting,
+});
+const companionWindows = new CompanionWindowCoordinator({
+  ...windowDependencies, pet: badgeWindow, tasks: panelWindow, usage: usageWindow,
+});
+const settingsWindow = new SettingsWindowFacade({
+  ...windowDependencies,
+  showOpenDialog: (parent, options) => {
+    const owner = parent || BrowserWindow.getFocusedWindow();
+    return owner ? dialog.showOpenDialog(owner, options) : dialog.showOpenDialog(options);
+  },
+});
+const dailyReportWindow = new DailyReportWindowFacade(windowDependencies);
+const petMenuWindow = new PetMenuWindowFacade({ ...windowDependencies, onDismiss: () => petMenuController.dismiss() });
+const petMenuController = new PetMenuController({
+  window: petMenuWindow, getPreferences: windowDependencies.getPreferences,
+  getCursorPoint: () => screen.getCursorScreenPoint(),
+  getWorkArea: point => screen.getDisplayNearestPoint(point).workArea,
+  isQuitting: () => quitting,
+  actions: { tasks: showTaskList, notebook: toggleNotebook, summary: showDailyReport, settings: showSettings,
+    quit: () => { quitting = true; app.quit(); } },
+});
+const speechWindow = new SpeechWindowFacade({
+  ...windowDependencies,
+  onClosed: () => {
+    cancelSpeechRelease();
+    speechCapabilities = { supported: false, voices: [] };
+    resolveSpeechReady?.(speechState());
+    resolveSpeechReady = null;
+    for (const [id, pending] of pendingSpeechRequests) {
+      clearTimeout(pending.timer);
+      pending.resolve({ ok: false, error: "speech_window_closed" });
+      pendingSpeechRequests.delete(id);
+    }
+  },
+});
+const windowFacades = [badgeWindow, petMenuWindow, panelWindow, usageWindow, notebookWindow, settingsWindow, dailyReportWindow, speechWindow];
 
 function statePath() {
   return path.join(app.getPath("userData"), "companion-window.json");
@@ -284,6 +381,7 @@ function scheduleCopywriter(preferences, delayMs) {
 function settingsState() {
   return {
     preferences: preferenceStore.get(),
+    aiStatus: aiTextService?.snapshot(),
     agentProviders: agentProviderRegistry?.snapshot() || {
       activeProviderId: "",
       providers: [],
@@ -306,7 +404,7 @@ function activateAgentProvider(preferences = preferenceStore?.get()) {
   }
   usageProviderRegistry?.setActiveProvider(provider.usageProviderId);
   sendPetState();
-  if (usageWindow?.isVisible()) usageWindow.webContents.send("usage:card-shown");
+  if (usageWindow?.isVisible()) usageWindow.refresh();
   return provider;
 }
 
@@ -326,7 +424,7 @@ function remoteControlState() {
 
 function emitRemoteControlState() {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
-    settingsWindow.webContents.send("remote-control:changed", remoteControlState());
+    settingsWindow.send("remote-control:changed", remoteControlState());
   }
 }
 
@@ -399,7 +497,7 @@ function finishInitialPetReveal(reason) {
     badgeWindow.setBounds(bounds, false);
     sendPetState();
     badgeWindow.showInactive();
-    badgeWindow.webContents.invalidate?.();
+    badgeWindow.invalidate();
     console.log(`[companion] badge window visible (${reason})`);
   }, 100);
   return true;
@@ -435,14 +533,13 @@ function applyPreferences(preferences) {
       badgeWindow.hide();
     }
   }
-  if (panelWindow && !panelWindow.isDestroyed()) {
-    panelWindow.setAlwaysOnTop(preferences.appearance.alwaysOnTop, "floating");
-  }
-  if (usageWindow && !usageWindow.isDestroyed()) {
-    usageWindow.setAlwaysOnTop(preferences.appearance.alwaysOnTop, "floating");
-    if (!preferences.appearance.showUsageCard) usageWindow.hide();
-    else if (panelWindow?.isVisible()) showUsageCard();
-  }
+  companionWindows.applyPreferences().catch((error) => {
+    console.error("[companion] display preferences failed", error);
+  });
+  if (desktopWindowsReady) notebookWindows.applyPreferences().catch((error) => {
+    console.error("[notebook] display preferences failed", error);
+  });
+  settingsWindow.send("notebook:visibility-changed", preferences.appearance.showNotebook);
   if (APP_RUNTIME.packaged) {
     app.setLoginItemSettings({ openAtLogin: preferences.startup.openAtLogin });
   }
@@ -467,12 +564,18 @@ async function saveWindowState() {
     display,
     preferenceStore.get().appearance.pet,
   );
+  state.notebookState = notebookWindows.getState();
+  state.notebookBounds = state.notebookState.expandedBounds || loadedWindowState.notebookBounds;
   const targetPath = statePath();
   const temporaryPath = `${targetPath}.tmp-${process.pid}`;
-  await mkdir(path.dirname(targetPath), { recursive: true });
-  await writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
-  await rename(temporaryPath, targetPath);
-  loadedWindowState = state;
+  const operation = positionSaveQueue.then(async () => {
+    await mkdir(path.dirname(targetPath), { recursive: true });
+    await writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+    await rename(temporaryPath, targetPath);
+    loadedWindowState = state;
+  });
+  positionSaveQueue = operation.catch(() => {});
+  await operation;
 }
 
 function schedulePositionSave() {
@@ -499,13 +602,12 @@ function keepPetOnVisibleDisplay() {
     y: currentBounds.y + Math.round(currentBounds.height / 2),
   });
   setBadgeWindowBoundsLocked(currentBounds, targetDisplay.workArea);
-  positionPanel();
-  positionUsageCard();
+  companionWindows.position();
   schedulePositionSave();
 }
 
 function installDisplayHandlers() {
-  const restoreVisibility = () => keepPetOnVisibleDisplay();
+  const restoreVisibility = () => { keepPetOnVisibleDisplay(); notebookWindows.keepOnScreen(); };
   screen.on("display-added", restoreVisibility);
   screen.on("display-removed", restoreVisibility);
   screen.on("display-metrics-changed", restoreVisibility);
@@ -576,14 +678,14 @@ async function petLibraryState() {
 }
 
 function sendPetState(state = petStateController?.snapshot(), overrideState = "") {
-  if (!badgeWindow || badgeWindow.isDestroyed() || badgeWindow.webContents.isLoading()) return;
+  if (!badgeWindow || badgeWindow.isDestroyed() || badgeWindow.isLoading()) return;
   const payload = petStatePayload(state);
   if (overrideState) {
     const pet = selectedPet || BUILTIN_PET;
     const availableStates = availablePetStates(pet);
     payload.state = resolveAvailablePetState(overrideState, availableStates);
   }
-  badgeWindow.webContents.send("pet:state", payload);
+  badgeWindow.updateState(payload);
 }
 
 function restorePetAnimation() {
@@ -599,10 +701,9 @@ function stopPetInertia(options = {}) {
 function finishPetMotion(reopenPanel = false) {
   stopPetInertia();
   enforceBadgeWindowSizeLock();
-  positionPanel();
-  positionUsageCard();
+  companionWindows.position();
   schedulePositionSave();
-  if (reopenPanel) showPanel();
+  if (reopenPanel) companionWindows.resume().catch((error) => console.error("[companion] resume failed", error));
 }
 
 function stopBadgeDrag() {
@@ -610,10 +711,9 @@ function stopBadgeDrag() {
   badgeDrag = null;
   stopPetInertia();
   enforceBadgeWindowSizeLock();
-  positionPanel();
-  positionUsageCard();
+  companionWindows.position();
   schedulePositionSave();
-  if (reopenPanel) showPanel();
+  if (reopenPanel) companionWindows.resume().catch((error) => console.error("[companion] resume failed", error));
 }
 
 function pointerValue(value) {
@@ -650,9 +750,8 @@ function movePetPointer(value) {
   if (!badgeDrag.dragging) {
     if (!crossedDragThreshold(badgeDrag.initialCursor, current)) return;
     badgeDrag.dragging = true;
-    badgeDrag.panelWasVisible = Boolean(panelWindow?.isVisible());
-    panelWindow?.hide();
-    usageWindow?.hide();
+    badgeDrag.panelWasVisible = companionWindows.isOpen();
+    companionWindows.hide();
   }
   const horizontalDelta = current.x - (badgeDrag.lastCursor?.x ?? badgeDrag.initialCursor.x);
   if (Math.abs(horizontalDelta) >= 1) badgeDrag.direction = horizontalDelta > 0 ? "right" : "left";
@@ -819,124 +918,52 @@ function workAreaForBounds(bounds) {
   return screen.getDisplayNearestPoint(point).workArea;
 }
 
-function positionPanel() {
-  if (!badgeWindow || !panelWindow) return;
-  const badgeBounds = badgeWindow.getBounds();
-  const workArea = workAreaForBounds(badgeBounds);
-  const currentBounds = panelWindow.getBounds();
-  const width = Math.min(PANEL_WIDTH, workArea.width - 24);
-  const height = Math.min(currentBounds.height, workArea.height - 24);
-  const verticalAlignment = panelVerticalAlignment(
-    panelVisibleItemCount,
-    height,
-    badgeBounds.height,
-  );
-  let panelAnchor = badgeBounds;
-  if (usageCardEnabled() && usageWindow && !usageWindow.isDestroyed()) {
-    const usageBounds = usageCardBoundsNearBadge(
-      badgeBounds,
-      {
-        width: Math.min(USAGE_CARD_WIDTH, workArea.width - 24),
-        height: usageWindow.getBounds().height,
-      },
-      workArea,
-      10,
-    );
-    if (usageBounds.x < badgeBounds.x) {
-      panelAnchor = { ...badgeBounds, x: usageBounds.x, width: 0 };
-    }
-  }
-  panelWindow.setBounds(
-    panelBoundsNearBadge(panelAnchor, { width, height }, workArea, 12, verticalAlignment),
-    false,
-  );
-}
-
-function positionUsageCard() {
-  if (!badgeWindow || !usageWindow || usageWindow.isDestroyed()) return;
-  const badgeBounds = badgeWindow.getBounds();
-  const workArea = workAreaForBounds(badgeBounds);
-  const currentBounds = usageWindow.getBounds();
-  const width = Math.min(USAGE_CARD_WIDTH, workArea.width - 24);
-  const height = Math.min(currentBounds.height, workArea.height - 24);
-  usageWindow.setBounds(
-    usageCardBoundsNearBadge(badgeBounds, { width, height }, workArea, 10),
-    false,
-  );
-}
-
-function usageCardEnabled() {
-  return preferenceStore?.get()?.appearance?.showUsageCard !== false;
-}
-
-function showUsageCard() {
-  if (!usageCardEnabled() || !usageWindow || usageWindow.isDestroyed()) return;
-  positionUsageCard();
-  usageWindow.showInactive();
-  usageWindow.webContents.send("usage:card-shown");
-}
-
-function cancelPanelRelease() {
-  if (panelIdleTimer) clearTimeout(panelIdleTimer);
-  panelIdleTimer = null;
-}
-
-function schedulePanelRelease() {
-  cancelPanelRelease();
-  panelIdleTimer = setTimeout(() => {
-    panelIdleTimer = null;
-    if (panelWindow?.isVisible() || usageWindow?.isVisible()) return;
-    if (panelWindow && !panelWindow.isDestroyed()) panelWindow.destroy();
-    if (usageWindow && !usageWindow.isDestroyed()) usageWindow.destroy();
-    panelWindow = null;
-    usageWindow = null;
-  }, PANEL_IDLE_RELEASE_MS);
-  panelIdleTimer.unref?.();
-}
-
-function hideCompanionPopovers() {
-  panelWindow?.hide();
-  usageWindow?.hide();
-  schedulePanelRelease();
-}
-
-function hidePopoversWhenFocusLeaves() {
-  setTimeout(() => {
-    if (quitting) return;
-    const panelFocused = panelWindow && !panelWindow.isDestroyed() && panelWindow.isFocused();
-    const usageFocused = usageWindow && !usageWindow.isDestroyed() && usageWindow.isFocused();
-    if (!panelFocused && !usageFocused) hideCompanionPopovers();
-  }, 120);
-}
-
-async function showPanel() {
+async function showPanel(options) {
   try {
-    cancelPanelRelease();
-    await ensurePanelWindows();
-    showUsageCard();
-    positionPanel();
-    panelWindow.show();
-    panelWindow.focus();
-    panelWindow.webContents.send("companion:panel-shown");
-    return true;
+    return await companionWindows.show(options);
   } catch (error) {
     console.error("[companion] task panel failed", error);
     return false;
   }
 }
 
-async function togglePanel() {
-  if (panelWindow?.isVisible() || usageWindow?.isVisible()) {
-    hideCompanionPopovers();
-    return false;
-  }
-  return showPanel();
+function showTaskList() { return showPanel({ forceTasks: true }); }
+async function setNotebookVisible(visible) {
+  if (quitting) return false;
+  const preferences = await preferenceStore.update({ appearance: { showNotebook: visible } });
+  settingsWindow.send("notebook:visibility-changed", preferences.appearance.showNotebook);
+  rebuildTrayMenu();
+  return notebookWindows.applyPreferences({ focus: visible });
+}
+function toggleNotebook() {
+  return setNotebookVisible(!preferenceStore.get().appearance.showNotebook)
+    .catch((error) => console.error("[notebook] visibility failed", error));
 }
 
-function showBadgeMenu() {
+async function togglePanel() {
+  try {
+    return await companionWindows.toggle();
+  } catch (error) {
+    console.error("[companion] popovers failed", error);
+    return false;
+  }
+}
+
+async function showBadgeMenu() {
+  if (badgeWindow.isDestroyed() || quitting) return false;
+  try { return await petMenuController.open(); }
+  catch (error) {
+    console.error("[companion] custom pet menu failed", error);
+    showNativeBadgeMenu();
+    return false;
+  }
+}
+
+function showNativeBadgeMenu() {
   if (!badgeWindow || badgeWindow.isDestroyed()) return;
   const menu = Menu.buildFromTemplate([
-    { label: "打开任务列表", click: showPanel },
+    { label: "打开任务列表", click: showTaskList },
+    { label: preferenceStore.get().appearance.showNotebook ? "隐藏记事板" : "打开记事板", click: toggleNotebook },
     {
       label: "总结今日工作",
       click: () => showDailyReport().catch((error) => console.error("[daily-report] window failed", error)),
@@ -954,86 +981,12 @@ function showBadgeMenu() {
       },
     },
   ]);
-  menu.popup({ window: badgeWindow });
+  badgeWindow.popupMenu(menu);
 }
 
-async function showDailyReport() {
-  if (dailyReportWindow && !dailyReportWindow.isDestroyed()) {
-    if (dailyReportWindow.isMinimized()) dailyReportWindow.restore();
-    dailyReportWindow.show();
-    dailyReportWindow.focus();
-    return;
-  }
+function showDailyReport() { return dailyReportWindow.show(); }
 
-  dailyReportWindow = new BrowserWindow({
-    width: DAILY_REPORT_WIDTH,
-    height: DAILY_REPORT_HEIGHT,
-    minWidth: 400,
-    minHeight: 420,
-    show: false,
-    title: `今日工作日报 · ${PRODUCT_NAME}`,
-    icon: createAgentPetIcon(256),
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1e221f" : "#f3f2ed",
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: PRELOAD_PATH,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-  dailyReportWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  dailyReportWindow.webContents.on("will-navigate", (event, targetUrl) => {
-    if (new URL(targetUrl).origin !== new URL(serviceUrl).origin) event.preventDefault();
-  });
-  dailyReportWindow.on("closed", () => {
-    dailyReportWindow = null;
-  });
-  dailyReportWindow.once("ready-to-show", () => {
-    dailyReportWindow?.show();
-    dailyReportWindow?.focus();
-  });
-  await dailyReportWindow.loadURL(`${serviceUrl}/daily-report.html`);
-}
-
-async function showSettings() {
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    if (settingsWindow.isMinimized()) settingsWindow.restore();
-    settingsWindow.show();
-    settingsWindow.focus();
-    return;
-  }
-
-  settingsWindow = new BrowserWindow({
-    width: SETTINGS_WIDTH,
-    height: SETTINGS_HEIGHT,
-    minWidth: 520,
-    minHeight: 620,
-    show: false,
-    title: `设置 · ${PRODUCT_NAME}`,
-    icon: createAgentPetIcon(256),
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1e221f" : "#f3f2ed",
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: PRELOAD_PATH,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-  settingsWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  settingsWindow.webContents.on("will-navigate", (event, targetUrl) => {
-    if (new URL(targetUrl).origin !== new URL(serviceUrl).origin) event.preventDefault();
-  });
-  settingsWindow.on("closed", () => {
-    settingsWindow = null;
-  });
-  settingsWindow.once("ready-to-show", () => {
-    settingsWindow?.show();
-    settingsWindow?.focus();
-  });
-  await settingsWindow.loadURL(`${serviceUrl}/settings.html`);
-}
+function showSettings() { return settingsWindow.show(); }
 
 function speechState() {
   return {
@@ -1054,7 +1007,6 @@ function scheduleSpeechRelease() {
     speechIdleTimer = null;
     if (pendingSpeechRequests.size) return;
     if (speechWindow && !speechWindow.isDestroyed()) speechWindow.destroy();
-    speechWindow = null;
   }, SPEECH_IDLE_RELEASE_MS);
   speechIdleTimer.unref?.();
 }
@@ -1112,7 +1064,7 @@ async function requestSpeech(text, options = {}) {
       scheduleSpeechRelease();
     }, 30_000);
     pendingSpeechRequests.set(id, { resolve, timer });
-    speechWindow.webContents.send("speech:speak", {
+    speechWindow.send("speech:speak", {
       id,
       text: String(text || "").trim().slice(0, 500),
       voiceId: String(options.voiceId || "system"),
@@ -1139,7 +1091,7 @@ async function requestAudioPlayback(audio, mimeType = "audio/wav", options = {})
       scheduleSpeechRelease();
     }, 60_000);
     pendingSpeechRequests.set(id, { resolve, timer });
-    speechWindow.webContents.send("speech:play-audio", {
+    speechWindow.send("speech:play-audio", {
       id,
       dataUrl: `data:${mimeType};base64,${audio.toString("base64")}`,
       volume: Number.isFinite(Number(options.volume)) ? Number(options.volume) : 100,
@@ -1260,7 +1212,7 @@ function showTaskWindowsNotification({ task, event, text, preferences }) {
     body: String(text || task?.title || "任务状态已更新").slice(0, 180),
     silent: !preferences.notifications.windows.playSound,
   });
-  if (preferences.notifications.windows.openPanelOnClick) notification.on("click", showPanel);
+  if (preferences.notifications.windows.openPanelOnClick) notification.on("click", showTaskList);
   notification.show();
   return { ok: true, status: "sent" };
 }
@@ -1496,54 +1448,25 @@ async function removeGptSovitsService() {
 
 async function createSpeechWindow() {
   cancelSpeechRelease();
-  const ready = new Promise((resolve) => {
-    resolveSpeechReady = resolve;
-  });
-  speechWindow = new BrowserWindow({
-    width: 320,
-    height: 180,
-    show: false,
-    skipTaskbar: true,
-    webPreferences: {
-      preload: PRELOAD_PATH,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      backgroundThrottling: false,
-    },
-  });
-  speechWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  speechWindow.webContents.on("will-navigate", (event, targetUrl) => {
-    if (new URL(targetUrl).origin !== new URL(serviceUrl).origin) event.preventDefault();
-  });
-  speechWindow.on("closed", () => {
-    cancelSpeechRelease();
-    speechWindow = null;
-    speechCapabilities = { supported: false, voices: [] };
-    resolveSpeechReady?.(speechState());
-    resolveSpeechReady = null;
-    for (const [id, pending] of pendingSpeechRequests) {
-      clearTimeout(pending.timer);
-      pending.resolve({ ok: false, error: "speech_window_closed" });
-      pendingSpeechRequests.delete(id);
-    }
-  });
-  await speechWindow.loadURL(`${serviceUrl}/speech.html`);
+  const ready = new Promise((resolve) => { resolveSpeechReady = resolve; });
+  await speechWindow.ensureCreated();
+  let timeout;
   await Promise.race([
     ready,
-    new Promise((resolve) => setTimeout(resolve, 2_000)),
+    new Promise((resolve) => { timeout = setTimeout(resolve, 2_000); }),
   ]);
+  clearTimeout(timeout);
   return speechState();
 }
 
 async function ensureSpeechWindow() {
   cancelSpeechRelease();
-  if (speechWindow && !speechWindow.isDestroyed()) return speechState();
+  if (speechWindowPromise) return speechWindowPromise;
+  if (!speechWindow.isDestroyed()) return speechState();
   if (!speechWindowPromise) {
     speechWindowPromise = createSpeechWindow()
       .catch((error) => {
         if (speechWindow && !speechWindow.isDestroyed()) speechWindow.destroy();
-        speechWindow = null;
         throw error;
       })
       .finally(() => {
@@ -1574,7 +1497,8 @@ function rebuildTrayMenu() {
   const preferences = preferenceStore.get();
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: "打开任务列表", click: showPanel },
+      { label: "打开任务列表", click: showTaskList },
+      { label: preferences.appearance.showNotebook ? "隐藏记事板" : "打开记事板", click: toggleNotebook },
       {
         label: "总结今日工作",
         click: () => showDailyReport().catch((error) => console.error("[daily-report] window failed", error)),
@@ -1584,7 +1508,7 @@ function rebuildTrayMenu() {
         click: () => showSettings().catch((error) => console.error("[companion] settings failed", error)),
       },
       {
-        label: "显示任务徽标",
+        label: "显示桌面宠物",
         type: "checkbox",
         checked: preferences.appearance.showPet,
         click: (item) => {
@@ -1626,170 +1550,13 @@ function createTray() {
   rebuildTrayMenu();
 }
 
-async function createPanelWindows() {
-  const preferences = preferenceStore.get();
-  const primaryWorkArea = screen.getPrimaryDisplay().workArea;
-  const panelHeight = Math.min(PANEL_HEIGHT, primaryWorkArea.height - 24);
-  panelWindow = new BrowserWindow({
-    width: PANEL_WIDTH,
-    height: panelHeight,
-    show: false,
-    frame: false,
-    hasShadow: false,
-    transparent: true,
-    backgroundColor: "#00000000",
-    alwaysOnTop: preferences.appearance.alwaysOnTop,
-    skipTaskbar: true,
-    resizable: false,
-    minWidth: 300,
-    minHeight: PANEL_MIN_HEIGHT,
-    maximizable: false,
-    fullscreenable: false,
-    webPreferences: {
-      preload: PRELOAD_PATH,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-  panelWindow.setAlwaysOnTop(preferences.appearance.alwaysOnTop, "floating");
-  panelWindow.on("blur", hidePopoversWhenFocusLeaves);
-  panelWindow.on("close", (event) => {
-    if (quitting) return;
-    event.preventDefault();
-    panelWindow.hide();
-    schedulePanelRelease();
-  });
-  panelWindow.on("closed", () => {
-    panelWindow = null;
-  });
-  console.log("[companion] loading task panel");
-  await panelWindow.loadURL(`${serviceUrl}/?companion=1`);
-  console.log("[companion] task panel loaded");
-
-  usageWindow = new BrowserWindow({
-    width: USAGE_CARD_WIDTH,
-    height: USAGE_CARD_HEIGHT,
-    show: false,
-    frame: false,
-    hasShadow: false,
-    transparent: true,
-    backgroundColor: "#00000000",
-    alwaysOnTop: preferences.appearance.alwaysOnTop,
-    skipTaskbar: true,
-    resizable: false,
-    minWidth: USAGE_CARD_WIDTH,
-    minHeight: USAGE_CARD_MIN_HEIGHT,
-    maxWidth: USAGE_CARD_WIDTH,
-    maxHeight: USAGE_CARD_MAX_HEIGHT,
-    maximizable: false,
-    fullscreenable: false,
-    webPreferences: {
-      preload: PRELOAD_PATH,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-  usageWindow.setAlwaysOnTop(preferences.appearance.alwaysOnTop, "floating");
-  usageWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  usageWindow.on("blur", hidePopoversWhenFocusLeaves);
-  usageWindow.on("close", (event) => {
-    if (quitting) return;
-    event.preventDefault();
-    usageWindow.hide();
-    schedulePanelRelease();
-  });
-  usageWindow.on("closed", () => {
-    usageWindow = null;
-  });
-  await usageWindow.loadURL(`${serviceUrl}/usage-card.html`);
-  positionPanel();
-  positionUsageCard();
-}
-
-async function ensurePanelWindows() {
-  if (panelWindow && !panelWindow.isDestroyed() && usageWindow && !usageWindow.isDestroyed()) {
-    return;
-  }
-  if (!panelWindowsPromise) {
-    if (panelWindow && !panelWindow.isDestroyed()) panelWindow.destroy();
-    if (usageWindow && !usageWindow.isDestroyed()) usageWindow.destroy();
-    panelWindow = null;
-    usageWindow = null;
-    panelWindowsPromise = createPanelWindows()
-      .catch((error) => {
-        if (panelWindow && !panelWindow.isDestroyed()) panelWindow.destroy();
-        if (usageWindow && !usageWindow.isDestroyed()) usageWindow.destroy();
-        panelWindow = null;
-        usageWindow = null;
-        throw error;
-      })
-      .finally(() => {
-        panelWindowsPromise = null;
-      });
-  }
-  await panelWindowsPromise;
-}
-
 async function createWindows() {
-  const saved = await readWindowState();
-  loadedWindowState = saved;
+  loadedWindowState = await readWindowState();
   const preferences = preferenceStore.get();
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const petSize = petWindowSize(preferences.appearance.pet.width, 4);
-  const badgeBounds = restorePetWindowBounds(
-    saved,
-    screen.getAllDisplays(),
-    primaryDisplay,
-    petSize,
-  );
-
-  badgeWindow = new BrowserWindow({
-    ...badgeBounds,
-    show: false,
-    frame: false,
-    transparent: true,
-    backgroundColor: "#00000000",
-    alwaysOnTop: preferences.appearance.alwaysOnTop,
-    skipTaskbar: true,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    hasShadow: false,
-    focusable: false,
-    webPreferences: {
-      preload: PRELOAD_PATH,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-  badgeInitialRevealPending = true;
-  captureBadgeWindowSizeLock();
-  badgeWindow.on("resize", () => {
-    if (correctingBadgeWindowSize) return;
-    setImmediate(enforceBadgeWindowSizeLock);
-  });
-  badgeWindow.setAlwaysOnTop(preferences.appearance.alwaysOnTop, "floating");
-  badgeWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  badgeWindow.on("moved", () => {
-    positionPanel();
-    positionUsageCard();
-    schedulePositionSave();
-  });
-  badgeWindow.on("show", rebuildTrayMenu);
-  badgeWindow.on("hide", rebuildTrayMenu);
-  console.log("[companion] loading task badge");
-  await badgeWindow.loadURL(`${serviceUrl}/companion-badge.html`);
-  console.log("[companion] task badge loaded");
-  positionPanel();
-  positionUsageCard();
+  await badgeWindow.ensureCreated();
+  companionWindows.position();
   if (preferences.appearance.showPet) {
-    // A fully hidden transparent window may not compose its first custom GIF on Windows.
-    // Keep it participating in rendering at zero opacity, then reveal it after renderer ACK.
+    // Keep the layered surface participating in rendering before the first asset ACK.
     badgeWindow.setOpacity(0);
     badgeWindow.showInactive();
   }
@@ -1800,9 +1567,7 @@ async function createWindows() {
 }
 
 function isTrustedSender(event) {
-  return [badgeWindow, panelWindow, usageWindow, settingsWindow, dailyReportWindow, speechWindow].some(
-    (window) => window && !window.isDestroyed() && event.sender === window.webContents,
-  );
+  return windowFacades.some((window) => window.ownsSender(event));
 }
 
 function requireTrustedSender(event) {
@@ -1810,28 +1575,56 @@ function requireTrustedSender(event) {
 }
 
 function requireSettingsMainFrame(event) {
-  const webContents = settingsWindow?.webContents;
-  if (!settingsWindow || settingsWindow.isDestroyed()
-    || !webContents || webContents.isDestroyed()
-    || event.sender !== webContents
-    || event.senderFrame !== webContents.mainFrame) {
-    throw new Error("Untrusted storage request");
-  }
+  if (!settingsWindow.ownsMainFrame(event)) throw new Error("Untrusted storage request");
 }
 
 function installIpcHandlers() {
-  ipcMain.handle("companion:toggle-panel", () => togglePanel());
-  ipcMain.handle("companion:hide-panel", () => {
-    if (!panelWindow || panelWindow.isDestroyed()) return false;
-    hideCompanionPopovers();
+  installPetMenuIpc({ ipcMain, window: petMenuWindow, controller: petMenuController });
+  const getNotebookMcpConfig = () => {
+    if (!notebookMcpBridge?.ready) throw new Error("记事板连接尚未就绪，请重新启动应用。");
+    return notebookMcpConfig({ executable: process.execPath,
+      entry: path.join(HERE, "notebook", "mcp", "stdio.mjs"),
+      connectionFile: path.join(app.getPath("userData"), "notebook-mcp-connection.json") });
+  };
+  const notebookCodexConnection = new NotebookCodexConnection({ getConfig: getNotebookMcpConfig, workingDirectory: app.getPath("userData") });
+  installNotebookConnectionIpc({ ipcMain, requireSettingsMainFrame, getConnection: () => notebookCodexConnection });
+  installNotebookWindowIpc({ ipcMain, window: notebookWindow, controller: notebookWindows });
+  const notebookController = createNotebookController({ getStore: () => notebookStore,
+    ownsMainFrame: event => notebookWindow.ownsMainFrame(event) });
+  ipcMain.handle("notebook:snapshot", notebookController.snapshot);
+  ipcMain.handle("notebook:command", notebookController.command);
+  ipcMain.handle("notebook:mcp-config", async event => {
+    requireSettingsMainFrame(event);
+    const config = getNotebookMcpConfig();
+    clipboard.writeText(JSON.stringify(config, null, 2));
+    return { ok: true };
+  });
+  ipcMain.handle("notebook:appearance", (event) => {
+    if (!notebookWindow.ownsMainFrame(event)) throw new Error("Untrusted notebook appearance request");
+    return notebookWindow.getAppearance();
+  });
+  ipcMain.handle("notebook:background", (event) => {
+    if (!notebookWindow.ownsMainFrame(event)) throw new Error("Untrusted notebook background request");
+    return notebookWindow.getBackground();
+  });
+  ipcMain.handle("companion:toggle-panel", (event) => {
+    requireTrustedSender(event);
+    return togglePanel();
+  });
+  ipcMain.handle("companion:hide-panel", (event) => {
+    if (!panelWindow.ownsSender(event) || !panelWindow.isVisible()) return false;
+    companionWindows.hideEmptyTasks();
     return false;
   });
+  ipcMain.handle("notebook:hide", (event) => {
+    if (!notebookWindow.ownsMainFrame(event)) return false;
+    return setNotebookVisible(false);
+  });
   ipcMain.handle("companion:show-badge-menu", (event) => {
-    if (!badgeWindow || badgeWindow.isDestroyed() || event.sender !== badgeWindow.webContents) {
+    if (!badgeWindow.ownsMainFrame(event)) {
       throw new Error("Untrusted badge menu request");
     }
-    showBadgeMenu();
-    return true;
+    return showBadgeMenu();
   });
   ipcMain.handle("companion:open-settings", (event) => {
     requireTrustedSender(event);
@@ -1844,18 +1637,7 @@ function installIpcHandlers() {
     return usageProviderRegistry.getCurrentUsage({ force: options?.force === true });
   });
   ipcMain.on("usage:resize-card", (event, value) => {
-    if (!usageWindow || usageWindow.isDestroyed() || event.sender !== usageWindow.webContents) return;
-    const badgeBounds = badgeWindow?.getBounds() || usageWindow.getBounds();
-    const workArea = workAreaForBounds(badgeBounds);
-    const requestedHeight = Math.round(Number(value?.height) || USAGE_CARD_HEIGHT);
-    const height = Math.max(
-      USAGE_CARD_MIN_HEIGHT,
-      Math.min(USAGE_CARD_MAX_HEIGHT, workArea.height - 24, requestedHeight),
-    );
-    const currentBounds = usageWindow.getBounds();
-    if (Math.abs(currentBounds.height - height) < 2) return;
-    usageWindow.setBounds({ ...currentBounds, width: USAGE_CARD_WIDTH, height }, false);
-    positionUsageCard();
+    if (usageWindow.ownsSender(event)) usageWindow.resize(value);
   });
   async function readDailyReportTasks() {
     const tasksUrl = new URL("/api/v1/tasks", serviceUrl);
@@ -1893,6 +1675,8 @@ function installIpcHandlers() {
       agent: { activeProviderId: provider.id },
     });
     applyPreferences(preferences);
+    aiTextService?.configurationChanged();
+    void aiTextService?.check();
     return settingsState();
   });
   ipcMain.handle("remote-control:get", (event) => {
@@ -1938,10 +1722,14 @@ function installIpcHandlers() {
     await shutdownOwnedService();
     return appUpdater.installUpdate();
   });
+  installAiSettingsIpc({
+    ipcMain, requireSettingsMainFrame, controller: aiSettingsController, service: aiTextService,
+  });
   ipcMain.handle("settings:update", async (event, patch) => {
     requireTrustedSender(event);
     if (patch && (Object.prototype.hasOwnProperty.call(patch, "remoteControl")
-      || Object.prototype.hasOwnProperty.call(patch, "agent"))) {
+      || Object.prototype.hasOwnProperty.call(patch, "agent")
+      || Object.prototype.hasOwnProperty.call(patch, "ai"))) {
       throw new Error("Agent and remote-control changes require their dedicated settings APIs");
     }
     const preferences = await preferenceStore.update(patch);
@@ -1955,6 +1743,8 @@ function installIpcHandlers() {
   ipcMain.handle("settings:reset", async (event) => {
     requireTrustedSender(event);
     const preferences = await preferenceStore.reset();
+    aiTextService?.configurationChanged();
+    void aiTextService?.check();
     await refreshSelectedPet(preferences.appearance.pet.selectedPetId);
     applyPreferences(preferences);
     scheduleCopywriter(preferences);
@@ -2057,7 +1847,7 @@ function installIpcHandlers() {
       },
     }[String(kind || "")];
     if (!options) throw new Error("不支持的语音文件类型");
-    const result = await dialog.showOpenDialog(settingsWindow || BrowserWindow.getFocusedWindow(), {
+    const result = await settingsWindow.openFileDialog({
       ...options,
       properties: ["openFile"],
     });
@@ -2144,7 +1934,7 @@ function installIpcHandlers() {
   });
   ipcMain.handle("pet-library:select-zip", async (event) => {
     requireTrustedSender(event);
-    const result = await dialog.showOpenDialog(settingsWindow || BrowserWindow.getFocusedWindow(), {
+    const result = await settingsWindow.openFileDialog({
       title: "选择宠物 ZIP 压缩包",
       filters: [{ name: "宠物压缩包", extensions: ["zip"] }],
       properties: ["openFile"],
@@ -2199,75 +1989,52 @@ function installIpcHandlers() {
     return { ok: true, rootPath };
   });
   ipcMain.on("speech:voices", (event, value) => {
-    if (!speechWindow || speechWindow.isDestroyed() || event.sender !== speechWindow.webContents) return;
+    if (!speechWindow.ownsSender(event)) return;
     updateSpeechCapabilities(value);
   });
   ipcMain.on("speech:result", (event, value) => {
-    if (!speechWindow || speechWindow.isDestroyed() || event.sender !== speechWindow.webContents) return;
+    if (!speechWindow.ownsSender(event)) return;
     settleSpeechRequest(value);
   });
   ipcMain.on("pet-window:pointer-down", (event, value) => {
-    if (badgeWindow && event.sender === badgeWindow.webContents) startPetPointer(value);
+    if (badgeWindow.ownsSender(event)) startPetPointer(value);
   });
   ipcMain.on("pet-window:pointer-move", (event, value) => {
-    if (badgeWindow && event.sender === badgeWindow.webContents) movePetPointer(value);
+    if (badgeWindow.ownsSender(event)) movePetPointer(value);
   });
   ipcMain.on("pet-window:pointer-up", (event, value) => {
-    if (badgeWindow && event.sender === badgeWindow.webContents) endPetPointer(value, false);
+    if (badgeWindow.ownsSender(event)) endPetPointer(value, false);
   });
   ipcMain.on("pet-window:pointer-cancel", (event, value) => {
-    if (badgeWindow && event.sender === badgeWindow.webContents) endPetPointer(value, true);
+    if (badgeWindow.ownsSender(event)) endPetPointer(value, true);
   });
   ipcMain.on("pet-renderer:animation-end", (event, value) => {
-    if (badgeWindow && event.sender === badgeWindow.webContents) {
+    if (badgeWindow.ownsSender(event)) {
       petStateController?.acknowledgeAnimation(value?.generation);
     }
   });
   ipcMain.on("pet-renderer:ready", (event) => {
-    if (badgeWindow && event.sender === badgeWindow.webContents) {
+    if (badgeWindow.ownsSender(event)) {
       finishInitialPetReveal("first pet frame ready");
     }
   });
   ipcMain.on("companion:start-badge-drag", (event) => {
-    if (badgeWindow && event.sender === badgeWindow.webContents) {
+    if (badgeWindow.ownsSender(event)) {
       const cursor = screen.getCursorScreenPoint();
       startPetPointer({ pointerId: -1, screenX: cursor.x, screenY: cursor.y, time: Date.now() });
     }
   });
   ipcMain.on("companion:stop-badge-drag", (event) => {
-    if (badgeWindow && event.sender === badgeWindow.webContents) {
+    if (badgeWindow.ownsSender(event)) {
       const cursor = screen.getCursorScreenPoint();
       endPetPointer({ pointerId: -1, screenX: cursor.x, screenY: cursor.y, time: Date.now() }, true);
     }
   });
   ipcMain.on("companion:resize-panel", (event, value) => {
-    if (!panelWindow || panelWindow.isDestroyed() || event.sender !== panelWindow.webContents) return;
-    const badgeBounds = badgeWindow?.getBounds() || panelWindow.getBounds();
-    const workArea = workAreaForBounds(badgeBounds);
-    const maximumHeight = Math.min(PANEL_HEIGHT, workArea.height - 24);
-    const requestedHeight = Math.round(Number(value?.height) || 0);
-    const height = Math.max(PANEL_MIN_HEIGHT, Math.min(maximumHeight, requestedHeight));
-    const currentBounds = panelWindow.getBounds();
-    const previousAlignment = panelVerticalAlignment(
-      panelVisibleItemCount,
-      currentBounds.height,
-      badgeBounds.height,
-    );
-    const requestedItemCount = Math.round(Number(value?.itemCount));
-    panelVisibleItemCount = Number.isFinite(requestedItemCount)
-      ? Math.max(0, Math.min(999, requestedItemCount))
-      : 0;
-    const nextAlignment = panelVerticalAlignment(
-      panelVisibleItemCount,
-      height,
-      badgeBounds.height,
-    );
-    if (Math.abs(currentBounds.height - height) < 2 && previousAlignment === nextAlignment) return;
-    const width = Math.min(PANEL_WIDTH, workArea.width - 24);
-    panelWindow.setBounds({ ...currentBounds, width, height }, false);
-    positionPanel();
+    if (panelWindow.ownsSender(event)) panelWindow.resize(value);
   });
-  ipcMain.on("companion:update-summary", (_event, value) => {
+  ipcMain.on("companion:update-summary", (event, value) => {
+    if (!badgeWindow.ownsSender(event)) return;
     const count = Math.max(0, Math.min(999, Number(value?.count) || 0));
     const state = typeof value?.state === "string" ? value.state : "idle";
     tray?.setToolTip(count ? `${PRODUCT_NAME} · ${count} 项待处理` : PRODUCT_NAME);
@@ -2276,12 +2043,16 @@ function installIpcHandlers() {
 }
 
 async function shutdownOwnedService() {
+  await positionSaveQueue;
+  await notebookMcpBridge?.stop();
+  await notebookStore?.close();
   appUpdater?.stop();
   if (remoteControlController) await remoteControlController.stop();
   remoteChannelHub?.stop();
   if (taskEventClient) await taskEventClient.stop();
   if (notificationOrchestrator) await notificationOrchestrator.stop();
   if (weixinRemoteService) await weixinRemoteService.stop();
+  aiTextService?.stop();
   if (codexCopywriter) await codexCopywriter.stop();
   if (dailyReportGenerator) await dailyReportGenerator.stop();
   if (gptSovitsService) await gptSovitsService.stop();
@@ -2317,10 +2088,15 @@ if (!hasSingleInstanceLock) {
 
   app.on("before-quit", (event) => {
     quitting = true;
+    clearTimeout(savePositionTimer);
+    saveWindowState().catch((error) => console.error("[companion] window position save failed", error));
+    notebookWindows.dispose();
+    companionWindows.dispose();
+    petMenuController.dispose();
     stopBadgeDrag();
     const hasManagedVoiceService = gptSovitsService?.hasManagedProcess();
     if ((!ownedServer && !ownedCollector && !hasManagedVoiceService && !codexCopywriter
-      && !taskEventClient && !notificationOrchestrator && !weixinRemoteService) || shutdownStarted) return;
+      && !taskEventClient && !notificationOrchestrator && !weixinRemoteService && !notebookStore) || shutdownStarted) return;
     event.preventDefault();
     shutdownStarted = true;
     shutdownOwnedService().finally(() => app.quit());
@@ -2374,6 +2150,13 @@ if (!hasSingleInstanceLock) {
       gptSovitsService = new GptSovitsServiceController(gptSovitsEnginePath());
       phrasePoolStore = new PhrasePoolStore(phrasePoolPath());
       notificationHistory = new NotificationHistoryStore(notificationHistoryPath());
+      notebookStore = new NotebookStore(path.join(managedRootPath(), "notebook"), {
+        onChange: () => notebookWindow.send("notebook:changed"),
+      });
+      notebookMcpBridge = new NotebookMcpBridge({
+        connectionFile: path.join(app.getPath("userData"), "notebook-mcp-connection.json"), tools: createNotebookTools(notebookStore),
+      });
+      await notebookMcpBridge.start().catch(error => console.error("[notebook] MCP bridge unavailable", error.message));
       secureCredentials = new SecureCredentials(secureCredentialsPath(), safeStorage);
       weixinRemoteService = new WeixinRemoteService({
         loadCredentials: () => secureCredentials.load("weixin"),
@@ -2381,7 +2164,7 @@ if (!hasSingleInstanceLock) {
         clearCredentials: () => secureCredentials.clear("weixin"),
         onStatus: (status) => {
           if (settingsWindow && !settingsWindow.isDestroyed()) {
-            settingsWindow.webContents.send("weixin:status-changed", status);
+            settingsWindow.send("weixin:status-changed", status);
           }
           emitRemoteControlState();
         },
@@ -2396,15 +2179,34 @@ if (!hasSingleInstanceLock) {
         isPackaged: APP_RUNTIME.packaged,
         onStatus: (status) => {
           if (settingsWindow && !settingsWindow.isDestroyed()) {
-            settingsWindow.webContents.send("app:update-status-changed", status);
+            settingsWindow.send("app:update-status-changed", status);
           }
         },
       });
-      codexCopywriter = new CodexCopywriter({
+      aiTextService = new AiTextService({
+        getPreferences: () => preferenceStore.get(),
+        providers: new Map([
+          ["codex", new CodexTextProvider({ workingDirectory: copywriterPath() })],
+          ...["deepseek", "compatible"].map((id) => [id, new HttpTextProvider({
+            id, name: id === "deepseek" ? "DeepSeek" : "兼容接口",
+            loadKey: (connectionId) => secureCredentials.load(`ai.${connectionId}`),
+          })]),
+        ]),
+        onStatus: (status) => settingsWindow?.send("ai:status", status),
+      });
+      aiSettingsController = new AiSettingsController({
+        preferences: preferenceStore, credentials: secureCredentials, service: aiTextService,
+        onSaved: (preferences) => {
+          scheduleCopywriter(preferences);
+          void aiTextService.check();
+        },
+      });
+      codexCopywriter = new PhrasePoolGenerator({
         store: phrasePoolStore,
-        workingDirectory: copywriterPath(),
+        textService: aiTextService,
       });
       dailyReportGenerator = new DailyReportGenerator({
+        textService: aiTextService,
         workingDirectory: copywriterPath(),
         cacheDirectory: dailyReportCachePath(),
       });
@@ -2449,6 +2251,8 @@ if (!hasSingleInstanceLock) {
       installIpcHandlers();
       serviceUrl = await ensureCollectorService();
       await createWindows();
+      desktopWindowsReady = true;
+      await notebookWindows.applyPreferences();
       installDisplayHandlers();
       createTray();
       appUpdater.start();
@@ -2461,6 +2265,7 @@ if (!hasSingleInstanceLock) {
           console.error("[notifications] waiting for collector failed", error);
         });
       scheduleCopywriter(preferences, 3_000);
+      void aiTextService.check();
       console.log("[companion] tray ready");
     })
     .catch((error) => {

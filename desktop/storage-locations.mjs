@@ -4,6 +4,7 @@ import path from "node:path";
 export const STORAGE_LOCATION_IDS = Object.freeze({
   APP_DATA: "app-data",
   NOTIFICATION_HISTORY: "notification-history",
+  NOTEBOOK: "notebook",
 });
 
 function resolvedDirectory(value, name) {
@@ -46,6 +47,7 @@ export function createStorageLocations({
       id: STORAGE_LOCATION_IDS.NOTIFICATION_HISTORY,
       path: notificationHistory,
     }),
+    notebook: Object.freeze({ id: STORAGE_LOCATION_IDS.NOTEBOOK, path: path.join(managedData, "notebook") }),
   });
 }
 

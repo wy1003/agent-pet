@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { normalizeAiPreferences } from "./ai/preferences.mjs";
 
 const CONTENT_LEVELS = ["brief", "standard", "detailed"];
 const MOBILE_PROVIDERS = ["weixin"];
@@ -10,9 +11,11 @@ const SPEECH_LANGUAGES = ["zh", "ja", "en", "ko", "yue", "auto"];
 const VOICE_TONES = ["cute", "warm", "concise", "formal", "custom"];
 const PET_RENDER_MODES = ["pixelated", "smooth"];
 const PET_REDUCED_MOTION = ["system", "reduce", "full"];
+const NOTEBOOK_STYLES = ["classic", "glass"];
 
 export const DEFAULT_PREFERENCES = Object.freeze({
-  version: 15,
+  version: 20,
+  ai: normalizeAiPreferences(),
   agent: {
     activeProviderId: "codex",
   },
@@ -79,7 +82,11 @@ export const DEFAULT_PREFERENCES = Object.freeze({
   appearance: {
     showPet: true,
     showBadge: true,
+    showTaskPanel: true,
     showUsageCard: true,
+    showNotebook: false,
+    notebookAlwaysOnTop: true,
+    notebookStyle: "classic",
     alwaysOnTop: true,
     theme: "system",
     pet: {
@@ -184,7 +191,8 @@ export function normalizePreferences(value) {
   );
 
   return {
-    version: 15,
+    version: defaults.version,
+    ai: normalizeAiPreferences(input.ai),
     agent: {
       activeProviderId: typeof agent.activeProviderId === "string"
         && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(agent.activeProviderId)
@@ -319,6 +327,10 @@ export function normalizePreferences(value) {
     appearance: {
       showPet,
       showBadge: showPet,
+      showTaskPanel: boolean(appearance.showTaskPanel, defaults.appearance.showTaskPanel),
+      showNotebook: boolean(appearance.showNotebook, defaults.appearance.showNotebook),
+      notebookAlwaysOnTop: boolean(appearance.notebookAlwaysOnTop, defaults.appearance.notebookAlwaysOnTop),
+      notebookStyle: oneOf(appearance.notebookStyle, NOTEBOOK_STYLES, defaults.appearance.notebookStyle),
       showUsageCard: boolean(
         appearance.showUsageCard,
         defaults.appearance.showUsageCard,

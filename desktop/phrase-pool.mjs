@@ -106,10 +106,11 @@ export class PhrasePoolStore {
   async readRecord() {
     try {
       const record = JSON.parse(await readFile(this.filePath, "utf8"));
-      if (record?.version !== PHRASE_POOL_VERSION || record?.source !== "codex") return null;
+      if (record?.version !== PHRASE_POOL_VERSION || !["codex", "ai"].includes(record?.source)) return null;
       return {
         version: PHRASE_POOL_VERSION,
-        source: "codex",
+        source: record.source,
+        generation: record.generation || null,
         styleFingerprint: String(record.styleFingerprint || ""),
         generatedAt: String(record.generatedAt || ""),
         phrases: normalizePhrasePool(record.phrases),
@@ -131,10 +132,11 @@ export class PhrasePoolStore {
       : builtinPhrasePool();
   }
 
-  async saveCodexPool(style, phrases) {
+  async saveGeneratedPool(style, phrases, generation = null) {
     const record = {
       version: PHRASE_POOL_VERSION,
-      source: "codex",
+      source: "ai",
+      generation,
       styleFingerprint: phraseStyleFingerprint(style),
       generatedAt: new Date().toISOString(),
       phrases: normalizePhrasePool(phrases, { minimumPerEvent: 4 }),
@@ -152,4 +154,7 @@ export class PhrasePoolStore {
     }
     return record;
   }
+
+  // Existing integrations can still write pools; old records remain readable.
+  saveCodexPool(style, phrases) { return this.saveGeneratedPool(style, phrases); }
 }

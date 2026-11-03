@@ -1,0 +1,22 @@
+:root { color-scheme: light; --card: #fff; --ink: #202726; --muted: #7b8387; --line: #e7eae9; --accent: #205d50; --hover: #e5f0ec; --danger: #9a453f; --danger-soft: #f6e3e0; }
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
+body { padding: 8px; font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; user-select: none; }
+.menu { padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); box-shadow: 0 3px 7px rgb(20 35 29 / 15%); }
+button { display: flex; align-items: center; gap: 9px; width: 100%; height: 30px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); font: 12px/1.4 "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; text-align: left; white-space: nowrap; cursor: default; }
+button svg { width: 15px; height: 15px; flex: 0 0 auto; color: var(--muted); fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.control-knob { stroke-width: 3; }
+button:hover, button:focus-visible { color: var(--accent); background: var(--hover); outline: none; }
+button:hover svg, button:focus-visible svg { color: currentColor; }
+.separator { height: 1px; margin: 4px 5px; background: var(--line); }
+.quit { color: var(--muted); }
+.quit:hover, .quit:focus-visible { color: var(--danger); background: var(--danger-soft); }
+@media (prefers-color-scheme: dark) {
+  :root { color-scheme: dark; --card: #272d30; --ink: #eef1ee; --muted: #a0a9ad; --line: #3c4446; --accent: #83c6ae; --hover: #293f37; --danger: #ee9c95; --danger-soft: #4a302e; }
+}
+@media (forced-colors: active) {
+  .menu { border-color: CanvasText; background: Canvas; }
+  button { color: ButtonText; }
+  button:hover, button:focus-visible { outline: 1px solid Highlight; outline-offset: -2px; }
+  .separator { background: CanvasText; }
+}

@@ -1,7 +1,7 @@
 {
   "name": "agent-pet",
   "productName": "Agent Pet",
-  "version": "0.2.1",
+  "version": "0.10.4",
   "private": true,
   "main": "desktop/main.mjs",
   "type": "module",
@@ -33,10 +33,12 @@
     "pngjs": "^7.0.0"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@openai/codex-sdk": "^0.146.0",
     "electron-updater": "^6.6.2",
     "fflate": "^0.8.2",
-    "qrcode": "1.5.4"
+    "qrcode": "1.5.4",
+    "zod": "^4.6.7"
   },
   "build": {
     "appId": "io.github.wy1003.agentpet",

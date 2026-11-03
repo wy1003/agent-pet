@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { Codex } from "@openai/codex-sdk";
 import {
   COPYWRITER_PROJECT_NAME,
   LEGACY_COPYWRITER_PROJECT_NAME,
@@ -254,6 +253,7 @@ function readyDailyReportResult({
   warning,
   fromCache,
   stale,
+  generation = null,
 }) {
   const variants = formatDailyReportVariants(reports, now);
   return {
@@ -268,6 +268,7 @@ function readyDailyReportResult({
     fromCache,
     stale,
     source,
+    generation,
     warning,
   };
 }
@@ -282,7 +283,8 @@ export class DailyReportGenerator {
       options.cacheDirectory
       || path.join(path.dirname(this.workingDirectory), "cache", "daily-reports"),
     );
-    this.createCodex = options.createCodex || (() => new Codex());
+    this.textService = options.textService;
+    if (typeof this.textService?.generateJson !== "function") throw new TypeError("AI text service is required");
     this.logger = options.logger || console;
     this.running = null;
     this.abortController = null;
@@ -349,6 +351,7 @@ export class DailyReportGenerator {
           taskCount: cached.taskCount,
           currentTaskCount: completedTasks.length,
           source: cached.source,
+          generation: cached.generation,
           warning: cached.warning,
           fromCache: true,
           stale: cached.taskFingerprint !== taskFingerprint,
@@ -380,38 +383,32 @@ export class DailyReportGenerator {
     }
 
     let reports;
-    let source = "codex";
+    let source = "ai";
+    let generation = null;
     let warning = "";
     try {
-      await mkdir(this.workingDirectory, { recursive: true });
-      const thread = this.createCodex().startThread({
-        workingDirectory: this.workingDirectory,
-        skipGitRepoCheck: true,
-        sandboxMode: "read-only",
-        approvalPolicy: "never",
-        networkAccessEnabled: false,
-        webSearchMode: "disabled",
-        modelReasoningEffort: "low",
-      });
       this.abortController = new AbortController();
       const timeout = setTimeout(() => this.abortController?.abort(), 10 * 60 * 1000);
       timeout.unref?.();
       try {
-        const result = await thread.run(dailyReportPrompt(completedTasks, now), {
-          outputSchema: DAILY_REPORT_SCHEMA,
+        const result = await this.textService.generateJson({
+          prompt: dailyReportPrompt(completedTasks, now),
+          schema: DAILY_REPORT_SCHEMA,
+          purpose: "daily-report",
           signal: this.abortController.signal,
         });
-        reports = normalizeDailyReportVariants(JSON.parse(result.finalResponse));
+        reports = normalizeDailyReportVariants(result.value);
+        generation = result.generation;
       } finally {
         clearTimeout(timeout);
         this.abortController = null;
       }
     } catch (error) {
       if (this.stopped) throw error;
-      this.logger.warn("[daily-report] Codex generation failed; using local fallback", error);
+      this.logger.warn("[daily-report] AI generation failed; using local fallback", error);
       reports = fallbackDailyReportVariants(completedTasks);
       source = "local";
-      warning = "Codex 暂时无法生成摘要，已使用本地整理结果。";
+      warning = `AI 暂时无法生成摘要，已使用本地整理结果。${error?.safeAiError ? error.message : "请在设置中检查 AI 连接。"}`;
     }
 
     const generatedAt = new Date().toISOString();
@@ -423,6 +420,7 @@ export class DailyReportGenerator {
       taskCount: completedTasks.length,
       variants: reports,
       source,
+      generation,
       warning,
     };
     try {
@@ -438,6 +436,7 @@ export class DailyReportGenerator {
       taskCount: completedTasks.length,
       currentTaskCount: completedTasks.length,
       source,
+      generation,
       warning,
       fromCache: false,
       stale: false,
@@ -461,7 +460,7 @@ export class DailyReportGenerator {
         || typeof value.taskFingerprint !== "string"
         || !/^[a-f0-9]{64}$/.test(value.taskFingerprint)
         || !Number.isInteger(value.taskCount) || value.taskCount < 1 || value.taskCount > 100_000
-        || !["codex", "local"].includes(value.source)
+        || !["codex", "ai", "local"].includes(value.source)
         || !Number.isFinite(Date.parse(value.generatedAt || ""))) {
         throw new Error("Invalid daily report cache metadata");
       }
@@ -472,6 +471,7 @@ export class DailyReportGenerator {
         taskCount: value.taskCount,
         variants: normalizeDailyReportVariants({ variants: value.variants }),
         source: value.source,
+        generation: value.generation || null,
         warning: compactText(value.warning, 300),
       };
     } catch (error) {

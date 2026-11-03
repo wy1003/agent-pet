@@ -31,6 +31,7 @@ async function rootScore(root, pathExists) {
     [path.join(root, "voices"), 20],
     [path.join(root, "pets"), 10],
     [path.join(root, "notification-history"), 5],
+    [path.join(root, "notebook"), 5],
     [path.join(root, "copywriter", "phrase-pool.json"), 3],
   ];
   let score = 0;

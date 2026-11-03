@@ -1,3 +1,35 @@
+import { PetLibraryController } from "./pet-library-controller.js";
+import { PetLibraryView } from "./pet-library-view.js";
+let aiSettingsView = null;
+let aiSettingsLoading = null;
+
+// An optional page must not prevent general settings from initializing when a
+// still-running development server has an older static asset map or preload.
+function loadAiSettings() {
+  if (aiSettingsLoading) return aiSettingsLoading;
+  aiSettingsLoading = (async () => {
+    const root = document.querySelector("#ai-settings");
+    if (!root) return;
+    const status = root.querySelector("#ai-connection-status");
+    try {
+      if (!window.companion?.getAiSettings || !window.companion?.checkAiConnection) {
+        throw new Error("当前运行程序尚未提供 AI 连接接口，请退出并重新启动 Agent Pet。");
+      }
+      const { AiSettingsView } = await import("./ai-settings.js");
+      aiSettingsView ||= new AiSettingsView(root, window.companion);
+      await aiSettingsView.load();
+    } catch (error) {
+      console.error("Unable to initialize AI settings", error);
+      status.textContent = window.companion?.getAiSettings
+        ? "AI 设置组件未能加载，请退出并重新启动 Agent Pet。其他设置可正常使用。"
+        : "当前运行程序尚未提供 AI 连接接口，请退出并重新启动 Agent Pet。其他设置可正常使用。";
+      status.dataset.state = "error";
+      for (const control of root.querySelectorAll("input, select, button")) control.disabled = true;
+    }
+  })().finally(() => { aiSettingsLoading = null; });
+  return aiSettingsLoading;
+}
+
 const controls = [...document.querySelectorAll("[data-path]")];
 const saveStatus = document.querySelector("#save-status");
 const appVersion = document.querySelector("#app-version");
@@ -11,6 +43,8 @@ const testNotificationButton = document.querySelector("#test-notification");
 const testNotificationResult = document.querySelector("#test-notification-result");
 const notificationHistoryPathButton = document.querySelector("#notification-history-path");
 const notificationHistoryLocationStatus = document.querySelector("#notification-history-location-status");
+const notebookPathButton = document.querySelector("#notebook-path");
+const notebookLocationStatus = document.querySelector("#notebook-location-status");
 const agentProviderList = document.querySelector("#agent-provider-list");
 const agentProviderStatus = document.querySelector("#agent-provider-status");
 const navigationItems = [...document.querySelectorAll(".nav-item[data-page]")];
@@ -60,10 +94,8 @@ const closeVoiceEditorButtons = [
   document.querySelector("#close-voice-editor"),
   document.querySelector("#cancel-voice-editor"),
 ];
-const petLibrarySelect = document.querySelector("#pet-library-select");
 const petZipDrop = document.querySelector("#pet-zip-drop");
 const importPetZipButton = document.querySelector("#import-pet-zip");
-const removePetButton = document.querySelector("#remove-pet");
 const openPetLibraryButton = document.querySelector("#open-pet-library");
 const petLibraryStatus = document.querySelector("#pet-library-status");
 const petDownloadLink = document.querySelector("#open-pet-downloads");
@@ -119,8 +151,6 @@ let pendingVoiceFiles = { gpt: "", sovits: "", reference: "" };
 let serviceStatusRefreshing = false;
 let runtimeOptionsState = null;
 let voiceStyleDirty = false;
-let managedPetState = { rootPath: "", selectedPetId: "builtin-default", pets: [] };
-let petImportBusy = false;
 let notificationHistoryLocationId = "";
 let weixinState = {
   state: "disconnected",
@@ -141,71 +171,40 @@ let removeRemoteControlListener = null;
 let removeAppUpdateStatusListener = null;
 let appUpdateState = { state: "unavailable", currentVersion: "" };
 
+const petLibraryView = new PetLibraryView({
+  grid: document.querySelector("#pet-library-grid"),
+  status: petLibraryStatus,
+  importButton: importPetZipButton,
+  onSelect: id => petLibraryController.select(id),
+  onRemove: id => petLibraryController.remove(id),
+});
+const petLibraryController = new PetLibraryController({
+  api: window.companion,
+  view: petLibraryView,
+  confirm: message => window.confirm(message),
+});
+
 function showPage(page) {
   const selectedItem = navigationItems.find((item) => item.dataset.page === page);
   if (!selectedItem) return;
   for (const item of navigationItems) {
     item.setAttribute("aria-selected", String(item === selectedItem));
+    if (item === selectedItem) item.setAttribute("aria-current", "page");
+    else item.removeAttribute("aria-current");
   }
   for (const section of settingsPages) {
     section.hidden = section.dataset.settingsPage !== page;
   }
-  window.scrollTo({ top: 0 });
+  window.scrollTo({ top: 0, behavior: "instant" });
 }
 
 function setPetLibraryStatus(state, message) {
-  petLibraryStatus.dataset.state = state || "";
-  petLibraryStatus.textContent = message;
-}
-
-function renderPetLibrary(state) {
-  managedPetState = state || { rootPath: "", selectedPetId: "builtin-default", pets: [] };
-  const builtin = document.createElement("option");
-  builtin.value = "builtin-default";
-  builtin.textContent = "小团（内置默认）";
-  const options = (managedPetState.pets || []).map((pet) => {
-    const option = document.createElement("option");
-    option.value = pet.id;
-    option.textContent = pet.displayName || pet.id;
-    return option;
-  });
-  petLibrarySelect.replaceChildren(builtin, ...options);
-  petLibrarySelect.value = managedPetState.selectedPetId || "builtin-default";
-  removePetButton.disabled = petLibrarySelect.value === "builtin-default" || petImportBusy;
-  petLibraryStatus.title = managedPetState.rootPath || "";
+  petLibraryView.status(state, message);
 }
 
 async function loadPetLibrary() {
   if (!window.companion?.getPetLibrary) return;
-  renderPetLibrary(await window.companion.getPetLibrary());
-  setPetLibraryStatus("", managedPetState.pets.length
-    ? `已导入 ${managedPetState.pets.length} 个宠物。`
-    : "尚未导入宠物，可把完整 ZIP 压缩包拖到上方。"
-  );
-}
-
-async function importPetArchive(filePath) {
-  const archivePath = String(filePath || "");
-  if (!archivePath.toLowerCase().endsWith(".zip")) {
-    setPetLibraryStatus("error", "请选择完整的 ZIP 宠物压缩包。");
-    return;
-  }
-  petImportBusy = true;
-  importPetZipButton.disabled = true;
-  petLibrarySelect.disabled = true;
-  removePetButton.disabled = true;
-  setPetLibraryStatus("", "正在校验并复制宠物文件…");
-  try {
-    renderPetLibrary(await window.companion.importPetZip(archivePath));
-    setPetLibraryStatus("success", `“${petLibrarySelect.selectedOptions[0]?.textContent || "宠物"}”已导入并启用。`);
-  } catch (error) {
-    setPetLibraryStatus("error", `导入失败：${error.message || "压缩包格式不正确"}`);
-  } finally {
-    petImportBusy = false;
-    importPetZipButton.disabled = false;
-    petLibrarySelect.disabled = false;
-    removePetButton.disabled = petLibrarySelect.value === "builtin-default";
-  }
+  await petLibraryController.load();
 }
 
 function setStatus(state, label) {
@@ -315,6 +314,11 @@ async function loadStorageLocations() {
   notificationHistoryLocationStatus.textContent = "";
   try {
     const locations = await window.companion.getStorageLocations();
+    const notebookLocation = locations?.notebook;
+    notebookPathButton.textContent = notebookLocation?.path || "记事板目录不可用";
+    notebookPathButton.title = notebookLocation?.path || "";
+    notebookPathButton.dataset.locationId = notebookLocation?.id || "";
+    notebookPathButton.disabled = !notebookLocation?.path || !notebookLocation?.id;
     const location = locations?.notificationHistory;
     const locationPath = String(location?.path || "");
     notificationHistoryLocationId = String(location?.id || "");
@@ -327,6 +331,9 @@ async function loadStorageLocations() {
     notificationHistoryPathButton.disabled = !notificationHistoryLocationId || !locationPath;
   } catch (error) {
     console.error("Unable to load storage locations", error);
+    notebookPathButton.textContent = "记事板目录不可用";
+    notebookPathButton.disabled = true;
+    notebookLocationStatus.textContent = `读取位置失败：${error.message || "未知错误"}`;
     notificationHistoryLocationId = "";
     notificationHistoryPathButton.textContent = "通知记录目录不可用";
     notificationHistoryPathButton.title = "";
@@ -994,6 +1001,7 @@ async function initialize() {
     subscribeRemoteControlSettings();
     subscribeAppUpdateStatus();
     render(await window.companion.getSettings());
+    void loadAiSettings();
     await Promise.all([
       loadStorageLocations(),
       loadVoices(),
@@ -1044,17 +1052,12 @@ copyPetConversionButton.addEventListener("click", async () => {
 
 importPetZipButton.addEventListener("click", async (event) => {
   event.stopPropagation();
-  if (petImportBusy) return;
-  try {
-    const result = await window.companion.selectPetZip();
-    if (!result?.canceled && result?.path) await importPetArchive(result.path);
-  } catch (error) {
-    setPetLibraryStatus("error", `无法选择压缩包：${error.message || "未知错误"}`);
-  }
+  await petLibraryController.chooseArchive();
 });
 
 petZipDrop.addEventListener("click", () => importPetZipButton.click());
 petZipDrop.addEventListener("keydown", (event) => {
+  if (event.target !== petZipDrop) return;
   if (event.key === "Enter" || event.key === " ") {
     event.preventDefault();
     importPetZipButton.click();
@@ -1075,43 +1078,14 @@ for (const eventName of ["dragleave", "dragend"]) {
 petZipDrop.addEventListener("drop", async (event) => {
   event.preventDefault();
   delete petZipDrop.dataset.dragging;
+  if (petLibraryController.busy) return;
   const files = [...(event.dataTransfer?.files || [])];
   if (files.length !== 1) {
     setPetLibraryStatus("error", "一次请只拖入一个完整的 ZIP 压缩包。");
     return;
   }
   const filePath = window.companion.getPathForFile(files[0]);
-  await importPetArchive(filePath);
-});
-
-petLibrarySelect.addEventListener("change", async () => {
-  petLibrarySelect.disabled = true;
-  removePetButton.disabled = true;
-  setPetLibraryStatus("", "正在切换宠物…");
-  try {
-    renderPetLibrary(await window.companion.selectPet(petLibrarySelect.value));
-    setPetLibraryStatus("success", "当前宠物已切换。");
-  } catch (error) {
-    setPetLibraryStatus("error", `切换失败：${error.message || "宠物文件不可用"}`);
-    await loadPetLibrary();
-  } finally {
-    petLibrarySelect.disabled = false;
-    removePetButton.disabled = petLibrarySelect.value === "builtin-default";
-  }
-});
-
-removePetButton.addEventListener("click", async () => {
-  const id = petLibrarySelect.value;
-  const name = petLibrarySelect.selectedOptions[0]?.textContent || id;
-  if (id === "builtin-default" || !window.confirm(`确定从应用宠物库删除“${name}”吗？\n\n只会删除应用管理的副本，不会删除原压缩包。`)) return;
-  removePetButton.disabled = true;
-  try {
-    renderPetLibrary(await window.companion.removePet(id));
-    setPetLibraryStatus("success", "宠物已从应用宠物库删除，当前已恢复为内置默认宠物。");
-  } catch (error) {
-    setPetLibraryStatus("error", `删除失败：${error.message || "未知错误"}`);
-    removePetButton.disabled = false;
-  }
+  await petLibraryController.importArchive(filePath);
 });
 
 openPetLibraryButton.addEventListener("click", async () => {
@@ -1568,6 +1542,7 @@ agentProviderList.addEventListener("click", async (event) => {
   agentProviderStatus.textContent = "正在切换智能体连接…";
   try {
     render(await window.companion.selectAgentProvider(providerId));
+    void loadAiSettings();
     setStatus("saved", "已保存");
   } catch (error) {
     agentProviderStatus.dataset.state = "error";
@@ -1594,6 +1569,16 @@ notificationHistoryPathButton.addEventListener("click", async () => {
     notificationHistoryPathButton.disabled = !notificationHistoryLocationId
       || !notificationHistoryPathButton.title;
   }
+});
+
+notebookPathButton.addEventListener("click", async () => {
+  if (notebookPathButton.disabled || !notebookPathButton.dataset.locationId) return;
+  notebookPathButton.disabled = true;
+  try {
+    await window.companion.openStorageLocation(notebookPathButton.dataset.locationId);
+    notebookLocationStatus.textContent = "已打开记事板目录。";
+  } catch (error) { notebookLocationStatus.textContent = `无法打开目录：${error.message || "未知错误"}`; }
+  finally { notebookPathButton.disabled = false; }
 });
 
 testNotificationButton.addEventListener("click", async () => {
@@ -1683,6 +1668,7 @@ resetButton.addEventListener("click", async () => {
   setStatus("saving", "正在恢复…");
   try {
     const state = await window.companion.resetSettings();
+    void loadAiSettings();
     if (revision !== saveRevision) return;
     voiceStyleDirty = false;
     saveVoiceStyleButton.disabled = true;
@@ -1696,4 +1682,54 @@ resetButton.addEventListener("click", async () => {
   }
 });
 
+window.companion?.onNotebookVisibilityChanged?.((visible) => {
+  const control = controls.find(item => item.dataset.path === "appearance.showNotebook");
+  if (control) control.checked = Boolean(visible);
+  if (settingsState) settingsState.preferences.appearance.showNotebook = Boolean(visible);
+});
+
 initialize();
+
+let notebookConnectionRevision = 0;
+const notebookConnect = document.querySelector("#connect-notebook-codex");
+const notebookConnectionStatus = document.querySelector("#notebook-mcp-status");
+async function checkNotebookConnection() {
+  if (!window.companion?.getNotebookCodexConnection) return;
+  const revision = ++notebookConnectionRevision;
+  try {
+    const result = await window.companion.getNotebookCodexConnection();
+    if (revision !== notebookConnectionRevision) return;
+    if (result?.ok && result.configured) {
+      notebookConnect.textContent = "检查连接配置";
+      notebookConnectionStatus.textContent = "记事板配置已就绪。可在 Codex 的 MCP 列表中查看连接状态。";
+    }
+  } catch {}
+}
+notebookConnect.addEventListener("click", async () => {
+  ++notebookConnectionRevision;
+  notebookConnect.disabled = true; notebookConnect.textContent = "正在配置…";
+  try {
+    if (!window.companion?.connectNotebookToCodex) throw new Error("请先重启 Agent Pet，让一键连接功能生效。");
+    const result = await window.companion.connectNotebookToCodex();
+    if (!result?.ok) throw new Error(result?.message || "连接配置未完成，请重试。");
+    notebookConnectionStatus.textContent = result.changed
+      ? "配置已完成！请在 Codex 的 MCP 列表中重启此连接，或重启 Codex 后使用。"
+      : "配置已就绪，无需重复添加。若工具还没出现，请在 Codex 中重启连接。";
+    notebookConnect.textContent = "检查连接配置";
+  } catch (error) {
+    notebookConnectionStatus.textContent = error.message;
+    notebookConnect.textContent = "重试连接 Codex";
+  } finally { notebookConnect.disabled = false; }
+});
+void checkNotebookConnection();
+
+document.querySelector("#copy-notebook-mcp").addEventListener("click", async event => {
+  ++notebookConnectionRevision;
+  const button = event.currentTarget, status = document.querySelector("#notebook-mcp-status");
+  button.disabled = true;
+  try {
+    await window.companion.copyNotebookMcpConfig();
+    status.textContent = "配置已复制。添加到 AI 应用的 MCP 设置后，即可让 AI 写入计划和灵感。";
+  } catch (error) { status.textContent = error.message || "复制失败，请重试。"; }
+  finally { button.disabled = false; }
+});

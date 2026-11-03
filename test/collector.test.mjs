@@ -73,6 +73,9 @@ test("collector health identity distinguishes the desktop service from other own
   );
   const { owner: _owner, ...missingOwner } = desktopHealth;
   assert.equal(isCompatibleCollectorHealth(missingOwner), false);
+  const { appVersion: _version, ...legacyServer } = desktopHealth;
+  assert.equal(isCompatibleCollectorHealth(legacyServer), false);
+  assert.equal(isCompatibleCollectorHealth({ ...desktopHealth, appVersion: "old-build" }), false);
 });
 
 test("collector excludes the exact internal Codex copywriter project", async (t) => {
@@ -232,6 +235,7 @@ test("HTTP snapshot, health identity and read endpoints expose collector state",
     {
       service: health.service,
       protocolVersion: health.protocolVersion,
+      appVersion: health.appVersion,
       owner: health.owner,
       stateNamespace: health.stateNamespace,
     },
@@ -359,13 +363,13 @@ test("HTTP server provides the local task list UI", async (t) => {
   assert.match(settingsPage, /data-voice-engine-option="gpt-sovits"/);
   assert.match(settingsPage, /notifications\.voice\.style\.addressee/);
   assert.match(settingsPage, /notifications\.voice\.style\.includeProjectName/);
-  assert.match(settingsPage, /Codex 自动生成/);
+  assert.match(settingsPage, /AI 自动生成/);
   assert.match(settingsPage, /id="save-voice-style"/);
   assert.match(settingsPage, /id="test-notification"/);
   assert.match(settingsPage, /data-page="general"/);
   assert.match(settingsPage, /data-settings-page="general"/);
   assert.match(settingsPage, /id="agent-provider-list"/);
-  assert.match(settingsPage, /连接智能体/);
+  assert.match(settingsPage, /任务来源/);
   assert.match(settingsPage, /id="notification-history-path"/);
   assert.match(settingsPage, /id="app-version"/);
   assert.match(settingsPage, /id="app-update-status"/);

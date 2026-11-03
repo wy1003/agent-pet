@@ -79,29 +79,21 @@ test("local fallback groups completed work by project", () => {
   assert.match(markdown, /## 文档项目/);
 });
 
-test("Codex generator returns a structured editable daily report", async (t) => {
+test("AI generator returns a structured editable daily report and model provenance", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-pet-daily-report-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  let threadOptions;
   let runOptions;
   let prompt;
   const generator = new DailyReportGenerator({
     workingDirectory: root,
     cacheDirectory: path.join(root, "cache"),
-    createCodex: () => ({
-      startThread(options) {
-        threadOptions = options;
-        return {
-          async run(value, options) {
-            prompt = value;
-            runOptions = options;
-            return {
-              finalResponse: JSON.stringify(generatedVariants()),
-            };
-          },
-        };
+    textService: {
+      async generateJson(options) {
+        prompt = options.prompt;
+        runOptions = options;
+        return { value: generatedVariants(), generation: { connectionId: "deepseek", modelId: "model-a" } };
       },
-    }),
+    },
   });
 
   const result = await generator.generate([completedTask()], {
@@ -109,7 +101,8 @@ test("Codex generator returns a structured editable daily report", async (t) => 
   });
 
   assert.equal(result.status, "ready");
-  assert.equal(result.source, "codex");
+  assert.equal(result.source, "ai");
+  assert.equal(result.generation.modelId, "model-a");
   assert.equal(result.taskCount, 1);
   assert.equal(result.currentTaskCount, 1);
   assert.equal(result.fromCache, false);
@@ -119,9 +112,7 @@ test("Codex generator returns a structured editable daily report", async (t) => 
   assert.match(result.variants.brief, /完成核心优化/);
   assert.match(result.variants.detailed, /自动化测试/);
   assert.match(prompt, /brief、standard、detailed/);
-  assert.equal(threadOptions.sandboxMode, "read-only");
-  assert.equal(threadOptions.approvalPolicy, "never");
-  assert.equal(runOptions.outputSchema, DAILY_REPORT_SCHEMA);
+  assert.equal(runOptions.schema, DAILY_REPORT_SCHEMA);
   assert.ok(Number.isFinite(Date.parse(result.generatedAt)));
   await generator.stop();
 });
@@ -132,7 +123,7 @@ test("daily report uses local output when Codex is unavailable", async (t) => {
   const generator = new DailyReportGenerator({
     workingDirectory: root,
     cacheDirectory: path.join(root, "cache"),
-    createCodex: () => ({ startThread: () => ({ run: async () => { throw new Error("offline"); } }) }),
+    textService: { generateJson: async () => { throw new Error("offline"); } },
     logger: { warn() {} },
   });
 
@@ -156,7 +147,7 @@ test("daily report returns an empty state without calling Codex", async (t) => {
   const generator = new DailyReportGenerator({
     workingDirectory: root,
     cacheDirectory: path.join(root, "cache"),
-    createCodex: () => { throw new Error("must not be called"); },
+    textService: { generateJson: () => { throw new Error("must not be called"); } },
   });
 
   const result = await generator.generate([], { now: new Date(2026, 7, 3, 18, 0) });
@@ -179,14 +170,12 @@ test("daily report cache is reused for the local day, reports task drift, and fo
   const generator = new DailyReportGenerator({
     workingDirectory: path.join(root, "working"),
     cacheDirectory,
-    createCodex: () => ({
-      startThread: () => ({
-        run: async () => {
+    textService: {
+        generateJson: async () => {
           codexCalls += 1;
-          return { finalResponse: JSON.stringify(generatedVariants(`-${codexCalls}`)) };
+          return { value: generatedVariants(`-${codexCalls}`), generation: { modelId: "model-a" } };
         },
-      }),
-    }),
+    },
   });
 
   const first = await generator.generate([completedTask()], { now });
@@ -234,7 +223,7 @@ test("daily report cache is reused for the local day, reports task drift, and fo
   const restored = new DailyReportGenerator({
     workingDirectory: path.join(root, "working-restored"),
     cacheDirectory,
-    createCodex: () => { throw new Error("cache should survive generator restart"); },
+    textService: { generateJson: () => { throw new Error("cache should survive generator restart"); } },
   });
   const afterRestart = await restored.generate(changedTasks, { now });
   assert.equal(afterRestart.fromCache, true);

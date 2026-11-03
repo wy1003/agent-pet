@@ -44,7 +44,7 @@ test("preferences normalize partial and invalid values against safe defaults", (
   assert.equal(preferences.rules.completed, false);
   assert.equal(preferences.rules.failed, false);
   assert.equal(preferences.rules.needs_input, true);
-  assert.equal(preferences.version, 15);
+  assert.equal(preferences.version, 20);
   assert.equal(preferences.agent.activeProviderId, "codex");
   assert.equal(preferences.notifications.voice.engine, "windows");
   assert.equal(preferences.notifications.voice.rate, -5);
@@ -67,6 +67,7 @@ test("preferences normalize partial and invalid values against safe defaults", (
   assert.equal(preferences.appearance.theme, "dark");
   assert.equal(preferences.appearance.showPet, true);
   assert.equal(preferences.appearance.showBadge, true);
+  assert.equal(preferences.appearance.showTaskPanel, true);
   assert.equal(preferences.appearance.showUsageCard, true);
   assert.equal(preferences.appearance.pet.width, 112);
   assert.equal(preferences.appearance.pet.renderMode, "smooth");
@@ -91,7 +92,7 @@ test("version 8 badge visibility migrates to pet visibility", () => {
     version: 8,
     appearance: { showBadge: false, pet: { width: 999, renderMode: "smooth" } },
   });
-  assert.equal(preferences.version, 15);
+  assert.equal(preferences.version, 20);
   assert.equal(preferences.appearance.showPet, false);
   assert.equal(preferences.appearance.showBadge, false);
   assert.equal(preferences.appearance.pet.width, 224);
@@ -110,7 +111,7 @@ test("global remote control defaults off and migrates the version 12 Weixin swit
       weixin: { enabled: true, allowedProjectCodes: ["P001"] },
     },
   });
-  assert.equal(migrated.version, 15);
+  assert.equal(migrated.version, 20);
   assert.deepEqual(migrated.remoteControl, { enabled: true });
 
   const whitelistOnly = normalizePreferences({
@@ -137,6 +138,50 @@ test("usage card visibility is a global appearance preference", () => {
     version: 14,
     appearance: { showUsageCard: false },
   }).appearance.showUsageCard, false);
+});
+
+test("desktop window selections migrate independently and reject non-boolean values", () => {
+  const legacy = normalizePreferences({ version: 15, appearance: { showPet: false, showUsageCard: false } });
+  assert.equal(legacy.appearance.showPet, false);
+  assert.equal(legacy.appearance.showTaskPanel, true);
+  assert.equal(legacy.appearance.showUsageCard, false);
+  assert.equal(legacy.appearance.showNotebook, false);
+  assert.equal(normalizePreferences({ appearance: { showNotebook: "true" } }).appearance.showNotebook, false);
+  assert.equal(normalizePreferences({ appearance: { showNotebook: true } }).appearance.showNotebook, true);
+  assert.equal(normalizePreferences({ version: 17, appearance: { showNotebook: true, alwaysOnTop: false } }).appearance.notebookAlwaysOnTop, true);
+  assert.equal(normalizePreferences({ appearance: { notebookAlwaysOnTop: false } }).appearance.notebookAlwaysOnTop, false);
+  assert.equal(normalizePreferences({ appearance: { showTaskPanel: "false" } }).appearance.showTaskPanel, true);
+  assert.equal(normalizePreferences({ appearance: { showTaskPanel: false } }).appearance.showTaskPanel, false);
+});
+
+test("desktop window selections persist across restart and reset to defaults", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agent-pet-window-preferences-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filePath = path.join(directory, "preferences.json");
+  await writeFile(filePath, JSON.stringify({ version: 15, appearance: { showUsageCard: false } }));
+  const store = new PreferenceStore(filePath);
+  await store.load();
+  assert.equal(store.get().appearance.showTaskPanel, true);
+  assert.equal(store.get().appearance.notebookStyle, "classic");
+  await store.update({ appearance: { showTaskPanel: false, showPet: false, showNotebook: true, notebookAlwaysOnTop: false, notebookStyle: "glass" } });
+  const restarted = new PreferenceStore(filePath);
+  await restarted.load();
+  assert.equal(restarted.get().appearance.showTaskPanel, false);
+  assert.equal(restarted.get().appearance.showPet, false);
+  assert.equal(restarted.get().appearance.showUsageCard, false);
+  assert.equal(restarted.get().appearance.showNotebook, true);
+  assert.equal(restarted.get().appearance.notebookAlwaysOnTop, false);
+  assert.equal(restarted.get().appearance.notebookStyle, "glass");
+  await restarted.reset();
+  assert.deepEqual((await new PreferenceStore(filePath).load()).appearance, createDefaultPreferences().appearance);
+});
+
+test("notebook style migration preserves the original look and rejects invalid styles", () => {
+  assert.equal(normalizePreferences({ version: 18 }).appearance.notebookStyle, "classic");
+  for (const notebookStyle of [null, true, "", "acrylic", "unknown"]) {
+    assert.equal(normalizePreferences({ appearance: { notebookStyle } }).appearance.notebookStyle, "classic");
+  }
+  assert.equal(normalizePreferences({ appearance: { notebookStyle: "glass" } }).appearance.notebookStyle, "glass");
 });
 
 test("active agent provider is persisted as one global connection", () => {

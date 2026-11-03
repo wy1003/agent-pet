@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>宠物菜单 · Agent Pet</title>
+    <link rel="stylesheet" href="/pet-menu.css" />
+    <script src="/pet-menu.js" type="module"></script>
+  </head>
+  <body>
+    <div id="pet-menu" class="menu" role="menu" aria-label="宠物快捷操作">
+      <button role="menuitem" data-action="tasks" tabindex="0"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m3 5 1 1 2-2M9 5h8M3 10h3m3 0h8M3 15h3m3 0h8" /></svg><span>任务列表</span></button>
+      <button role="menuitem" data-action="notebook" tabindex="-1"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="2.5" width="14" height="15" rx="2" /><path d="M7 2.5v15m3-11h4m-4 4h4" /></svg><span id="notebook-label">显示记事板</span></button>
+      <button role="menuitem" data-action="summary" tabindex="-1"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 2.5h7l4 4v11H5Z M12 2.5v4h4M8 10h5m-5 3h5" /></svg><span>今日工作总结</span></button>
+      <div class="separator" role="separator"></div>
+      <button role="menuitem" data-action="settings" tabindex="-1"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14" /><path class="control-knob" d="M6 3v4M13 8v4M8 13v4" /></svg><span>设置</span></button>
+      <div class="separator" role="separator"></div>
+      <button role="menuitem" data-action="quit" class="quit" tabindex="-1"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8 3H4v14h4m-1-7h10m-3-3 3 3-3 3" /></svg><span>退出 Agent Pet</span></button>
+    </div>
+  </body>
+</html>

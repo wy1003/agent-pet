@@ -3,6 +3,43 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 contextBridge.exposeInMainWorld("companion", {
   togglePanel: () => ipcRenderer.invoke("companion:toggle-panel"),
   hidePanel: () => ipcRenderer.invoke("companion:hide-panel"),
+  hideNotebook: () => ipcRenderer.invoke("notebook:hide"),
+  getNotebookPresentation: () => ipcRenderer.invoke("notebook:presentation"),
+  setNotebookCollapsed: (value) => ipcRenderer.invoke("notebook:collapse", value),
+  startNotebookDrag: () => ipcRenderer.invoke("notebook:drag-start"),
+  finishNotebookDrag: (cancelled = false) => ipcRenderer.invoke("notebook:drag-end", cancelled),
+  onNotebookPresentationChanged: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on("notebook:presentation-changed", listener);
+    return () => ipcRenderer.removeListener("notebook:presentation-changed", listener);
+  },
+  onNotebookVisibilityChanged: (callback) => {
+    const listener = (_event, visible) => callback(visible);
+    ipcRenderer.on("notebook:visibility-changed", listener);
+    return () => ipcRenderer.removeListener("notebook:visibility-changed", listener);
+  },
+  getNotebook: () => ipcRenderer.invoke("notebook:snapshot"),
+  getNotebookAppearance: () => ipcRenderer.invoke("notebook:appearance"),
+  getNotebookBackground: () => ipcRenderer.invoke("notebook:background"),
+  onNotebookBackgroundPosition: (callback) => {
+    const listener = (_event, position) => callback(position);
+    ipcRenderer.on("notebook:background-position", listener);
+    return () => ipcRenderer.removeListener("notebook:background-position", listener);
+  },
+  onNotebookAppearanceChanged: (callback) => {
+    const listener = (_event, appearance) => callback(appearance);
+    ipcRenderer.on("notebook:appearance-changed", listener);
+    return () => ipcRenderer.removeListener("notebook:appearance-changed", listener);
+  },
+  updateNotebook: (command) => ipcRenderer.invoke("notebook:command", command),
+  copyNotebookMcpConfig: () => ipcRenderer.invoke("notebook:mcp-config"),
+  getNotebookCodexConnection: () => ipcRenderer.invoke("notebook:codex-connection", "status"),
+  connectNotebookToCodex: () => ipcRenderer.invoke("notebook:codex-connection", "connect"),
+  onNotebookChanged: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("notebook:changed", listener);
+    return () => ipcRenderer.removeListener("notebook:changed", listener);
+  },
   onPanelShown: (callback) => {
     const listener = () => callback();
     ipcRenderer.on("companion:panel-shown", listener);
@@ -16,6 +53,14 @@ contextBridge.exposeInMainWorld("companion", {
     return () => ipcRenderer.removeListener("usage:card-shown", listener);
   },
   showBadgeMenu: () => ipcRenderer.invoke("companion:show-badge-menu"),
+  onPetMenuState: (callback) => {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on("pet-menu:state", listener);
+    return () => ipcRenderer.removeListener("pet-menu:state", listener);
+  },
+  petMenuReady: (revision) => ipcRenderer.invoke("pet-menu:ready", revision),
+  dismissPetMenu: (revision) => ipcRenderer.invoke("pet-menu:dismiss", revision),
+  selectPetMenuAction: (action) => ipcRenderer.invoke("pet-menu:select", action),
   openSettings: () => ipcRenderer.invoke("companion:open-settings"),
   getDailyReport: () => ipcRenderer.invoke("daily-report:get"),
   updateDailyReport: () => ipcRenderer.invoke("daily-report:update"),
@@ -36,6 +81,14 @@ contextBridge.exposeInMainWorld("companion", {
   resizePanel: (size) => ipcRenderer.send("companion:resize-panel", size),
   updateSummary: (summary) => ipcRenderer.send("companion:update-summary", summary),
   getSettings: () => ipcRenderer.invoke("settings:get"),
+  getAiSettings: () => ipcRenderer.invoke("ai:settings"),
+  updateAiSettings: (command) => ipcRenderer.invoke("ai:update", command),
+  checkAiConnection: () => ipcRenderer.invoke("ai:check"),
+  onAiStatus: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on("ai:status", listener);
+    return () => ipcRenderer.removeListener("ai:status", listener);
+  },
   selectAgentProvider: (id) => ipcRenderer.invoke("agent-providers:select", id),
   updateSettings: (patch) => ipcRenderer.invoke("settings:update", patch),
   resetSettings: () => ipcRenderer.invoke("settings:reset"),

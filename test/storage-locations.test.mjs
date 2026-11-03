@@ -27,6 +27,7 @@ test("storage locations expose only the configured application and notification 
       id: STORAGE_LOCATION_IDS.NOTIFICATION_HISTORY,
       path: path.resolve(root, "managed", "notification-history"),
     },
+    notebook: { id: STORAGE_LOCATION_IDS.NOTEBOOK, path: path.resolve(root, "managed", "notebook") },
   });
   assert.equal(
     storageLocationById(locations, STORAGE_LOCATION_IDS.NOTIFICATION_HISTORY),

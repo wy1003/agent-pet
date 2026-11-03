@@ -4,10 +4,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
-  CodexCopywriter,
+  PhrasePoolGenerator,
   copywriterPrompt,
   PHRASE_POOL_SCHEMA,
-} from "../desktop/codex-copywriter.mjs";
+} from "../desktop/phrase-generator.mjs";
 import {
   PHRASE_POOL_EVENTS,
   PhrasePoolStore,
@@ -53,24 +53,17 @@ test("phrase pool falls back locally and only uses a matching generated style", 
   assert.equal((await store.getPhrases({ ...style, tone: "formal" })).completed.length, 4);
 });
 
-test("Codex copywriter uses an isolated read-only SDK task and persists structured output", async (t) => {
+test("phrase generator uses the shared AI interface and persists model provenance", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codex-copywriter-test-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const store = new PhrasePoolStore(path.join(directory, "phrase-pool.json"));
-  const workingDirectory = path.join(directory, "AgentPetCopywriter");
-  const starts = [];
   const runs = [];
-  const createCodex = () => ({
-    startThread(options) {
-      starts.push(options);
-      return {
-        async run(prompt, options) {
-          runs.push({ prompt, options });
-          return { finalResponse: JSON.stringify(generatedPhrases()) };
-        },
-      };
+  const textService = {
+    async generateJson(request) {
+      runs.push(request);
+      return { value: generatedPhrases(), generation: { connectionId: "deepseek", modelId: "model-a" } };
     },
-  });
+  };
   const style = {
     addressee: "哥哥",
     assistantName: "宝宝",
@@ -78,16 +71,14 @@ test("Codex copywriter uses an isolated read-only SDK task and persists structur
     includeProjectName: true,
     customInstruction: "不要过度撒娇",
   };
-  const copywriter = new CodexCopywriter({ store, workingDirectory, createCodex });
+  const copywriter = new PhrasePoolGenerator({ store, textService });
 
   await copywriter.generate(style);
-  assert.equal(starts.length, 1);
-  assert.equal(starts[0].workingDirectory, workingDirectory);
-  assert.equal(starts[0].sandboxMode, "read-only");
-  assert.equal(starts[0].approvalPolicy, "never");
-  assert.equal(starts[0].networkAccessEnabled, false);
+  assert.equal(runs.length, 1);
   assert.match(runs[0].prompt, /哥哥/);
-  assert.ok(runs[0].options.outputSchema);
+  assert.equal(runs[0].schema, PHRASE_POOL_SCHEMA);
+  assert.equal(runs[0].purpose, "voice-phrases");
+  assert.equal((await store.readRecord()).generation.modelId, "model-a");
   assert.ok(Object.values(PHRASE_POOL_SCHEMA.properties).every(
     (schema) => !("uniqueItems" in schema),
   ));

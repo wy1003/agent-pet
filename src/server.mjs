@@ -6,6 +6,10 @@ import { STANDALONE_COLLECTOR_IDENTITY } from "./collector-service-identity.mjs"
 
 const PUBLIC_DIRECTORY = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
 const STATIC_FILES = new Map([
+  ["/pet-menu.html", { name: "pet-menu.html", type: "text/html; charset=utf-8" }],
+  ["/pet-menu.css", { name: "pet-menu.css", type: "text/css; charset=utf-8" }],
+  ["/pet-menu.js", { name: "pet-menu.js", type: "text/javascript; charset=utf-8" }],
+  ["/ai-settings.js", { name: "ai-settings.js", type: "text/javascript; charset=utf-8" }],
   ["/", { name: "index.html", type: "text/html; charset=utf-8" }],
   ["/index.html", { name: "index.html", type: "text/html; charset=utf-8" }],
   ["/app.css", { name: "app.css", type: "text/css; charset=utf-8" }],
@@ -14,6 +18,16 @@ const STATIC_FILES = new Map([
   ["/usage-card.html", { name: "usage-card.html", type: "text/html; charset=utf-8" }],
   ["/usage-card.css", { name: "usage-card.css", type: "text/css; charset=utf-8" }],
   ["/usage-card.js", { name: "usage-card.js", type: "text/javascript; charset=utf-8" }],
+  ["/notebook.html", { name: "notebook.html", type: "text/html; charset=utf-8" }],
+  ["/notebook.css", { name: "notebook.css", type: "text/css; charset=utf-8" }],
+  ["/notebook.js", { name: "notebook.js", type: "text/javascript; charset=utf-8" }],
+  ["/notebook-glass.js", { name: "notebook-glass.js", type: "text/javascript; charset=utf-8" }],
+  ["/notebook-glass-background.js", { name: "notebook-glass-background.js", type: "text/javascript; charset=utf-8" }],
+  ["/notebook-background-geometry.mjs", { name: "notebook-background-geometry.mjs", type: "text/javascript; charset=utf-8" }],
+  ["/notebook-source.mjs", { name: "notebook-source.mjs", type: "text/javascript; charset=utf-8" }],
+  ["/notebook-demo-source.mjs", { name: "notebook-demo-source.mjs", type: "text/javascript; charset=utf-8" }],
+  ["/notebook-deadline.mjs", { name: "notebook-deadline.mjs", type: "text/javascript; charset=utf-8" }],
+  ["/notebook-deadline-picker.js", { name: "notebook-deadline-picker.js", type: "text/javascript; charset=utf-8" }],
   [
     "/compact-task-presentation.mjs",
     { name: "compact-task-presentation.mjs", type: "text/javascript; charset=utf-8" },
@@ -21,6 +35,18 @@ const STATIC_FILES = new Map([
   ["/settings.html", { name: "settings.html", type: "text/html; charset=utf-8" }],
   ["/settings.css", { name: "settings.css", type: "text/css; charset=utf-8" }],
   ["/settings.js", { name: "settings.js", type: "text/javascript; charset=utf-8" }],
+  [
+    "/pet-library-controller.js",
+    { name: "pet-library-controller.js", type: "text/javascript; charset=utf-8" },
+  ],
+  [
+    "/pet-library-view.js",
+    { name: "pet-library-view.js", type: "text/javascript; charset=utf-8" },
+  ],
+  [
+    "/assets/pets/builtin-default/builtin-default-idle.gif",
+    { name: "assets/pets/builtin-default/builtin-default-idle.gif", type: "image/gif" },
+  ],
   [
     "/assets/agents/codex.svg",
     { name: "assets/agents/codex.svg", type: "image/svg+xml" },

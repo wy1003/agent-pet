@@ -79,3 +79,27 @@ export function badgeBoundsForDrag(initialBounds, initialCursor, currentCursor, 
     workArea,
   );
 }
+
+/** Find the nearest free slot without moving the existing pet/task/quota arrangement. */
+export function windowBoundsNearGroup(anchor, size, occupied, workArea, gap = 12) {
+  const width = Math.min(size.width, Math.max(1, workArea.width - gap * 2));
+  const height = Math.min(size.height, Math.max(1, workArea.height - gap * 2));
+  const xs = [workArea.x + gap, workArea.x + workArea.width - width - gap];
+  const ys = [anchor.y + anchor.height - height, workArea.y + gap,
+    workArea.y + workArea.height - height - gap];
+  for (const bounds of occupied) {
+    xs.push(bounds.x - width - gap, bounds.x + bounds.width + gap);
+    ys.push(bounds.y - height - gap, bounds.y + bounds.height + gap);
+  }
+  const candidates = xs.flatMap(x => ys.map(y => {
+    const bounds = clampWindowBounds({ x, y, width, height }, workArea);
+    const overlap = occupied.reduce((area, item) => area
+      + Math.max(0, Math.min(bounds.x + width, item.x + item.width + gap) - Math.max(bounds.x, item.x - gap))
+      * Math.max(0, Math.min(bounds.y + height, item.y + item.height + gap) - Math.max(bounds.y, item.y - gap)), 0);
+    const distance = Math.hypot(bounds.x + width / 2 - anchor.x - anchor.width / 2,
+      bounds.y + height - anchor.y - anchor.height);
+    return { bounds, overlap, distance };
+  }));
+  candidates.sort((a, b) => a.overlap - b.overlap || a.distance - b.distance);
+  return candidates[0].bounds;
+}

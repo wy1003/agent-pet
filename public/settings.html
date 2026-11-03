@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark" />
     <title>设置 · Agent Pet</title>
     <link rel="stylesheet" href="/settings.css" />
-    <script src="/settings.js" defer></script>
+    <script src="/settings.js" type="module"></script>
   </head>
   <body>
     <div id="unavailable" class="unavailable" hidden>
@@ -15,27 +15,47 @@
 
     <div class="settings-layout">
       <nav class="settings-nav" aria-label="设置分类">
-        <button class="nav-item" type="button" data-page="general" data-title="通用" aria-selected="true">
-          <span class="nav-icon" aria-hidden="true">⚙</span><span>通用</span>
-        </button>
-        <button class="nav-item" type="button" data-page="rules" data-title="提醒规则" aria-selected="false">
-          <span class="nav-icon" aria-hidden="true">◆</span><span>提醒规则</span>
-        </button>
-        <button class="nav-item" type="button" data-page="windows" data-title="系统通知" aria-selected="false">
-          <span class="nav-icon" aria-hidden="true">●</span><span>系统通知</span>
-        </button>
-        <button class="nav-item" type="button" data-page="voice" data-title="语音播报" aria-selected="false">
-          <span class="nav-icon" aria-hidden="true">◖</span><span>语音播报</span>
-        </button>
-        <button class="nav-item" type="button" data-page="mobile" data-title="远程通知" aria-selected="false">
-          <span class="nav-icon" aria-hidden="true">↗</span><span>远程通知</span>
-        </button>
-        <button class="nav-item" type="button" data-page="appearance" data-title="外观与启动" aria-selected="false">
-          <span class="nav-icon" aria-hidden="true">◐</span><span>外观与启动</span>
-        </button>
-        <button class="nav-item" type="button" data-page="community" data-title="参与共建" aria-selected="false">
-          <span class="nav-icon" aria-hidden="true">♥</span><span>参与共建</span>
-        </button>
+        <div class="nav-group" role="group" aria-labelledby="nav-app-title">
+          <p id="nav-app-title" class="nav-group-title">应用</p>
+          <button class="nav-item" type="button" data-page="general" aria-controls="general" aria-current="page" data-title="通用" aria-selected="true">
+            <span class="nav-icon" aria-hidden="true">⚙</span><span>通用</span>
+          </button>
+          <button class="nav-item" type="button" data-page="ai" aria-controls="ai" data-title="智能体与 AI" aria-selected="false">
+            <span class="nav-icon" aria-hidden="true">✦</span><span>智能体与 AI</span>
+          </button>
+        </div>
+        <div class="nav-group" role="group" aria-labelledby="nav-desktop-title">
+          <p id="nav-desktop-title" class="nav-group-title">桌面</p>
+          <button class="nav-item" type="button" data-page="pets" aria-controls="pets" data-title="宠物" aria-selected="false">
+            <span class="nav-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><ellipse cx="5" cy="9" rx="2.5" ry="3" /><ellipse cx="10" cy="5" rx="2.5" ry="3" /><ellipse cx="16" cy="5" rx="2.5" ry="3" /><ellipse cx="21" cy="10" rx="2.5" ry="3" /><path d="M12 11c-3 0-3 3-6 5-2 2-1 6 2 6 2 0 3-1 4-1s2 1 4 1c3 0 4-4 2-6-3-2-3-5-6-5Z" /></svg></span><span>宠物</span>
+          </button>
+          <button class="nav-item" type="button" data-page="desktop-windows" aria-controls="desktop-windows" data-title="任务与额度" aria-selected="false">
+            <span class="nav-icon" aria-hidden="true">▣</span><span>任务与额度</span>
+          </button>
+          <button class="nav-item" type="button" data-page="notebook" aria-controls="notebook" data-title="记事板" aria-selected="false">
+            <span class="nav-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z M8 3v18 M11 8h5 M11 12h5" /></svg></span><span>记事板</span>
+          </button>
+        </div>
+        <div class="nav-group" role="group" aria-labelledby="nav-notifications-title">
+          <p id="nav-notifications-title" class="nav-group-title">通知</p>
+          <button class="nav-item" type="button" data-page="rules" aria-controls="rules" data-title="提醒规则" aria-selected="false">
+            <span class="nav-icon" aria-hidden="true">◆</span><span>提醒规则</span>
+          </button>
+          <button class="nav-item" type="button" data-page="windows" aria-controls="windows" data-title="系统通知" aria-selected="false">
+            <span class="nav-icon" aria-hidden="true">●</span><span>系统通知</span>
+          </button>
+          <button class="nav-item" type="button" data-page="voice" aria-controls="voice" data-title="语音播报" aria-selected="false">
+            <span class="nav-icon" aria-hidden="true">◖</span><span>语音播报</span>
+          </button>
+          <button class="nav-item" type="button" data-page="mobile" aria-controls="mobile" data-title="远程通知" aria-selected="false">
+            <span class="nav-icon" aria-hidden="true">↗</span><span>远程通知</span>
+          </button>
+        </div>
+        <div class="nav-support">
+          <button class="nav-item" type="button" data-page="community" aria-controls="community" data-title="参与共建" aria-selected="false">
+            <span class="nav-icon" aria-hidden="true">♥</span><span>参与共建</span>
+          </button>
+        </div>
         <div id="save-status" class="save-status nav-save-status" data-state="loading" role="status">正在读取…</div>
         <div class="nav-app-version" aria-label="Agent Pet 版本与更新">
           <div class="nav-version-line">
@@ -51,35 +71,76 @@
         <section id="general" class="settings-section" data-settings-page="general">
           <div class="section-heading">
             <div>
-              <h2>连接智能体</h2>
-              <p>选择宠物当前跟随的 AI 智能体；任务、会话和额度信息会同步切换。</p>
+              <h2>通用</h2>
+              <p>设置应用的界面主题和启动方式。</p>
             </div>
+          </div>
+          <div class="general-subsection-heading">
+            <h3>界面主题</h3>
+            <p>选择应用界面的明暗风格。</p>
+          </div>
+          <div class="setting-list">
+            <label class="setting-row select-row">
+              <span><strong>主题</strong><small>应用到任务列表和设置页面。</small></span>
+              <select data-path="appearance.theme">
+                <option value="system">跟随系统</option>
+                <option value="light">浅色</option>
+                <option value="dark">深色</option>
+              </select>
+            </label>
+          </div>
+          <div class="general-subsection-heading">
+            <h3>启动方式</h3>
+            <p>设置登录 Windows 后是否自动运行 Agent Pet。</p>
+          </div>
+          <div class="setting-list">
+            <label class="setting-row" id="open-at-login-row">
+              <span><strong>Windows 登录后自动启动</strong><small id="open-at-login-help">安装正式版本后可用。</small></span>
+              <input type="checkbox" role="switch" data-path="startup.openAtLogin" />
+            </label>
+          </div>
+        </section>
+
+        <section id="ai" class="settings-section" data-settings-page="ai" hidden>
+          <div class="section-heading"><div><h2>智能体与 AI</h2><p>选择要跟随的智能体，以及用于生成文案和日报的 AI 服务。</p></div></div>
+          <div class="general-subsection-heading">
+            <h3>任务来源</h3>
+            <p>选择宠物当前跟随的 AI 智能体；任务、会话和额度信息会同步切换。</p>
           </div>
           <div id="agent-provider-list" class="agent-provider-list" aria-live="polite">
             <div class="agent-provider-placeholder">正在读取可连接的智能体…</div>
           </div>
           <p id="agent-provider-status" class="agent-provider-status" role="status"></p>
           <div class="general-subsection-heading">
-            <h3>本地数据</h3>
-            <p>查看 Agent Pet 保存在本机的记录位置。</p>
+            <h3>文本生成</h3>
+            <p>用于播报文案和工作日报，可独立于任务来源选择。</p>
           </div>
-          <div class="storage-location">
-            <div class="storage-location-heading">
-              <strong>通知记录</strong>
-              <small>按月份保存为 JSONL 文件并长期保留；点击路径打开目录。</small>
+          <div id="ai-settings" class="ai-settings">
+            <div class="setting-list">
+              <label class="setting-row select-row"><span><strong>生成服务</strong><small>跟随当前智能体，或单独指定文本生成服务。</small></span><select id="ai-connection" aria-label="AI 连接"></select></label>
+              <label class="setting-row select-row"><span><strong>模型选择方式</strong><small>更改仅影响新任务，运行中的任务继续使用原模型。</small></span><select id="ai-model-mode"><option value="default">跟随连接默认模型</option><option value="pinned">指定模型</option></select></label>
+              <label id="ai-pinned-row" class="setting-row select-row" hidden><span><strong>指定模型</strong><small>模型不可用时保留选择，并提示重新选择。</small></span><select id="ai-model" aria-label="指定模型"></select></label>
             </div>
-            <button id="notification-history-path" class="storage-path-button" type="button" disabled>
-              正在读取位置…
-            </button>
-            <p id="notification-history-location-status" class="storage-location-status" role="status"></p>
+            <div id="ai-http-fields" class="ai-http-fields" hidden>
+              <label class="field"><span>服务地址</span><input id="ai-base-url" type="url" placeholder="https://api.example.com/v1" autocomplete="off" /><small>填写 API 根地址，模型列表从该连接获取。</small></label>
+              <label class="field"><span>API 密钥</span><input id="ai-api-key" type="password" autocomplete="new-password" placeholder="输入新密钥，离开输入框后自动保存" /><small id="ai-key-status">尚未设置密钥</small></label>
+              <button id="ai-clear-key" type="button" class="secondary-button">移除密钥</button>
+              <label class="field"><span>连接默认模型</span><select id="ai-default-model" aria-label="连接默认模型"></select><small>服务未声明默认模型时，请从服务端列表中指定；不会自动选取列表第一项。</small></label>
+            </div>
+            <div class="ai-connection-result" aria-live="polite">
+              <p id="ai-save-status" role="status"></p>
+              <p id="ai-connection-status" role="status">正在读取 AI 设置…</p>
+              <p id="ai-connection-details"></p>
+              <button id="ai-check" type="button" class="secondary-button">刷新模型并检查连接</button>
+            </div>
           </div>
         </section>
 
         <section id="rules" class="settings-section" data-settings-page="rules" hidden>
           <div class="section-heading">
             <div>
-              <h2>任务事件</h2>
-              <p>决定每种任务事件是否需要提醒。</p>
+              <h2>提醒规则</h2>
+              <p>选择需要提醒的任务事件，并设置免打扰时段。</p>
             </div>
           </div>
           <div class="rule-table-wrap">
@@ -93,23 +154,23 @@
               <tbody>
                 <tr>
                   <th>需要批准或回答</th>
-                  <td><input type="checkbox" data-path="rules.needs_input" aria-label="需要批准或回答时启用提醒" /></td>
+                  <td><input type="checkbox" role="switch" data-path="rules.needs_input" aria-label="需要批准或回答时启用提醒" /></td>
                 </tr>
                 <tr>
                   <th>任务完成</th>
-                  <td><input type="checkbox" data-path="rules.completed" aria-label="任务完成时启用提醒" /></td>
+                  <td><input type="checkbox" role="switch" data-path="rules.completed" aria-label="任务完成时启用提醒" /></td>
                 </tr>
                 <tr>
                   <th>任务失败</th>
-                  <td><input type="checkbox" data-path="rules.failed" aria-label="任务失败时启用提醒" /></td>
+                  <td><input type="checkbox" role="switch" data-path="rules.failed" aria-label="任务失败时启用提醒" /></td>
                 </tr>
                 <tr>
                   <th>任务中断</th>
-                  <td><input type="checkbox" data-path="rules.interrupted" aria-label="任务中断时启用提醒" /></td>
+                  <td><input type="checkbox" role="switch" data-path="rules.interrupted" aria-label="任务中断时启用提醒" /></td>
                 </tr>
                 <tr>
                   <th>状态未知</th>
-                  <td><input type="checkbox" data-path="rules.unknown" aria-label="状态未知时启用提醒" /></td>
+                  <td><input type="checkbox" role="switch" data-path="rules.unknown" aria-label="状态未知时启用提醒" /></td>
                 </tr>
               </tbody>
             </table>
@@ -121,45 +182,77 @@
             </span>
             <button id="test-notification" class="secondary-button" type="button">发送测试提醒</button>
           </div>
+          <section id="quiet-hours" class="settings-subsection" aria-labelledby="quiet-hours-title">
+            <div class="general-subsection-heading subsection-heading-row">
+              <div>
+                <h3 id="quiet-hours-title">免打扰</h3>
+                <p>在指定时段暂停普通提醒。</p>
+              </div>
+              <label class="compact-toggle"><input type="checkbox" role="switch" data-path="quietHours.enabled" /> 启用</label>
+            </div>
+            <div class="settings-group-card">
+              <div class="field-grid two-columns">
+                <label class="field"><span>开始时间</span><input type="time" data-path="quietHours.start" /></label>
+                <label class="field"><span>结束时间</span><input type="time" data-path="quietHours.end" /></label>
+              </div>
+              <label class="setting-row standalone-row">
+                <span><strong>紧急事件仍然提醒</strong><small>任务失败或等待用户输入时不受免打扰限制。</small></span>
+                <input type="checkbox" role="switch" data-path="quietHours.allowUrgent" />
+              </label>
+            </div>
+          </section>
         </section>
 
         <section id="windows" class="settings-section" data-settings-page="windows" hidden>
           <div class="section-heading">
             <div>
-              <h2>通知行为</h2>
+              <h2>系统通知</h2>
               <p>控制已有桌面通知的显示方式。</p>
             </div>
           </div>
           <div class="setting-list">
             <label class="setting-row">
               <span><strong>启用系统通知</strong><small>任务进入所选状态时显示 Windows 通知。</small></span>
-              <input type="checkbox" data-path="notifications.windows.enabled" />
+              <input type="checkbox" role="switch" data-path="notifications.windows.enabled" />
             </label>
             <label class="setting-row">
               <span><strong>播放系统声音</strong><small>使用 Windows 当前通知声音。</small></span>
-              <input type="checkbox" data-path="notifications.windows.playSound" />
+              <input type="checkbox" role="switch" data-path="notifications.windows.playSound" />
             </label>
             <label class="setting-row">
               <span><strong>仅在任务面板隐藏时通知</strong><small>正在查看任务时减少重复打扰。</small></span>
-              <input type="checkbox" data-path="notifications.windows.onlyWhenPanelHidden" />
+              <input type="checkbox" role="switch" data-path="notifications.windows.onlyWhenPanelHidden" />
             </label>
             <label class="setting-row">
               <span><strong>点击通知打开任务列表</strong><small>从通知直接回到当前任务。</small></span>
-              <input type="checkbox" data-path="notifications.windows.openPanelOnClick" />
+              <input type="checkbox" role="switch" data-path="notifications.windows.openPanelOnClick" />
             </label>
+          </div>
+          <div class="general-subsection-heading">
+            <h3>通知记录</h3>
+          </div>
+          <div class="storage-location">
+            <div class="storage-location-heading">
+              <strong>通知记录</strong>
+              <small>按月份保存为 JSONL 文件并长期保留；点击路径打开目录。</small>
+            </div>
+            <button id="notification-history-path" class="storage-path-button" type="button" disabled>
+              正在读取位置…
+            </button>
+            <p id="notification-history-location-status" class="storage-location-status" role="status"></p>
           </div>
         </section>
 
         <section id="voice" class="settings-section" data-settings-page="voice" hidden>
           <div class="section-heading">
             <div>
-              <div class="heading-line"><h2>语音设置</h2><span id="voice-capability" class="planned-badge">检测中</span></div>
+              <div class="heading-line"><h2>语音播报</h2><span id="voice-capability" class="planned-badge">检测中</span></div>
               <p>选择系统语音，或连接用户自行运行的 GPT-SoVITS 本地服务。</p>
             </div>
-            <label class="compact-toggle"><input type="checkbox" data-path="notifications.voice.enabled" /> 启用</label>
+            <label class="compact-toggle"><input type="checkbox" role="switch" data-path="notifications.voice.enabled" /> 启用</label>
           </div>
           <div class="field-grid">
-            <div class="field full-width">
+            <div class="field full-width settings-group-card">
               <span>语音引擎</span>
               <div class="voice-engine-switch" role="group" aria-label="语音引擎">
                 <button type="button" data-voice-engine-option="windows" aria-pressed="false">
@@ -206,11 +299,11 @@
               </div>
               <label class="service-auto-start style-project-toggle">
                 <span><strong>播报项目名称</strong><small>打开后，文案可以自然地提到当前项目。</small></span>
-                <input type="checkbox" data-path="notifications.voice.style.includeProjectName" />
+                <input type="checkbox" role="switch" data-path="notifications.voice.style.includeProjectName" />
               </label>
               <div class="copywriter-mode" aria-label="文案生成方式">
-                <span><strong>文案生成方式</strong><small>Codex 会在后台静默维护本地文案池。</small></span>
-                <span class="read-only-badge">Codex 自动生成</span>
+                <span><strong>文案生成方式</strong><small>所选 AI 连接会在后台维护本地文案池，可在“AI 连接”中设置。</small></span>
+                <span class="read-only-badge">AI 自动生成</span>
               </div>
               <div class="style-save-actions">
                 <button id="save-voice-style" class="primary-button style-save-button" type="submit" disabled>保存设置</button>
@@ -263,7 +356,7 @@
                 </div>
                 <label class="service-auto-start">
                   <span><strong>使用时自动启动</strong><small>需要合成语音时启动服务，空闲 60 秒后自动停止以释放内存。</small></span>
-                  <input type="checkbox" data-path="notifications.voice.gptSovits.autoStartService" />
+                  <input type="checkbox" role="switch" data-path="notifications.voice.gptSovits.autoStartService" />
                 </label>
               </section>
 
@@ -370,7 +463,7 @@
               <h2>远程通知</h2>
               <p>连接外部服务，在离开电脑时也能收到任务进展。</p>
             </div>
-            <label class="compact-toggle"><input type="checkbox" data-path="notifications.mobile.enabled" /> 启用</label>
+            <label class="compact-toggle"><input type="checkbox" role="switch" data-path="notifications.mobile.enabled" /> 启用</label>
           </div>
           <section class="remote-services" aria-labelledby="remote-services-title">
             <div class="remote-group-heading">
@@ -422,7 +515,7 @@
                 <small>开启后，任一已连接且受信任的远程服务都可使用同一套指令操作本机已识别的项目。此设置对所有渠道生效，默认关闭。</small>
               </span>
               <label class="compact-toggle remote-control-toggle">
-                <input id="remote-control-enabled" type="checkbox" disabled />
+                <input id="remote-control-enabled" type="checkbox" role="switch" disabled />
                 允许
               </label>
             </div>
@@ -452,7 +545,7 @@
                 <p>控制远程消息中包含的信息量。</p>
               </div>
             </div>
-            <label class="field full-width">
+            <label class="field full-width settings-group-card">
               <span>内容等级</span>
               <select data-path="notifications.mobile.contentLevel">
                 <option value="brief">简短：只发送任务状态</option>
@@ -463,84 +556,56 @@
           </section>
         </section>
 
-        <section id="quiet-hours" class="settings-section" data-settings-page="rules" hidden>
+        <section id="pets" class="settings-section" data-settings-page="pets" hidden>
           <div class="section-heading">
             <div>
-              <h2>免打扰</h2>
-              <p>在指定时段暂停普通提醒。</p>
-            </div>
-            <label class="compact-toggle"><input type="checkbox" data-path="quietHours.enabled" /> 启用</label>
-          </div>
-          <div class="field-grid two-columns">
-            <label class="field"><span>开始时间</span><input type="time" data-path="quietHours.start" /></label>
-            <label class="field"><span>结束时间</span><input type="time" data-path="quietHours.end" /></label>
-          </div>
-          <label class="setting-row standalone-row">
-            <span><strong>紧急事件仍然提醒</strong><small>任务失败或等待用户输入时不受免打扰限制。</small></span>
-            <input type="checkbox" data-path="quietHours.allowUrgent" />
-          </label>
-        </section>
-
-        <section id="appearance" class="settings-section" data-settings-page="appearance" hidden>
-          <div class="section-heading">
-            <div>
-              <h2>桌面外观</h2>
-              <p>控制桌面宠物和任务面板的显示行为。</p>
+              <h2>宠物</h2>
+              <p>选择宠物，调整显示尺寸、动画和拖动行为。</p>
             </div>
           </div>
           <section class="pet-library-card" aria-labelledby="pet-library-title">
             <div class="pet-library-heading">
-              <div>
-                <h3 id="pet-library-title">宠物库</h3>
-                <p>导入后自动保存到应用目录，原 ZIP 移动或删除后仍可使用。</p>
-              </div>
-              <button id="open-pet-library" class="secondary-button compact-button" type="button">打开目录</button>
+              <h3 id="pet-library-title">宠物库</h3>
+              <a id="open-pet-downloads" class="pet-download-link" href="https://codex-pets.net/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开 Codex Pets">
+                下载宠物 <span aria-hidden="true">↗</span>
+              </a>
             </div>
-            <label class="field pet-library-select-field">
-              <span>当前宠物</span>
-              <select id="pet-library-select" aria-describedby="pet-library-status">
-                <option value="builtin-default">小团（内置默认）</option>
-              </select>
-            </label>
-            <div class="pet-download-source">
-              <div class="pet-download-heading">
-                <strong>下载新宠物</strong>
-                <a id="open-pet-downloads" class="pet-download-link" href="https://codex-pets.net/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开 Codex Pets">
-                  codex-pets.net <span aria-hidden="true">↗</span>
-                </a>
-              </div>
-              <p>在 Codex Pets 下载 ZIP，无需解压即可拖入。</p>
+            <div class="pet-collection">
+              <div id="pet-library-grid" class="pet-library-grid" role="group" aria-label="选择或管理宠物" aria-describedby="pet-library-status"></div>
+              <p id="pet-library-status" class="pet-library-status" role="status">正在读取宠物库…</p>
             </div>
             <div id="pet-zip-drop" class="pet-zip-drop" tabindex="0" role="button" aria-label="拖入或选择宠物 ZIP 压缩包">
-              <strong>把宠物 ZIP 压缩包拖到这里</strong>
-              <small>支持 Codex 精灵表 / Agent Pet 状态 GIF · ZIP 最大 50 MB</small>
-              <button id="import-pet-zip" class="secondary-button compact-button" type="button">选择 ZIP</button>
+              <span class="pet-drop-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M12 15V4m-4 4 4-4 4 4M5 14v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5" /></svg>
+              </span>
+              <span class="pet-drop-copy">
+                <strong>拖入 ZIP，添加新宠物</strong>
+                <small>Codex 精灵表 / 状态 GIF · 最大 50 MB</small>
+              </span>
+              <button id="import-pet-zip" class="pet-import-button" type="button">导入 ZIP</button>
             </div>
-            <div class="pet-conversion-help">
-              <div class="pet-conversion-heading">
-                <strong>从其他网站下载的宠物？</strong>
+            <button id="open-pet-library" class="pet-directory-button" type="button">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 6V4.5h5l2 2h8v9h-15V6Z" /></svg>
+              打开目录
+            </button>
+            <details class="pet-conversion-help">
+              <summary>导入说明 <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" /></svg></summary>
+              <div class="pet-conversion-content">
+                <p>ZIP 无需解压，导入后会保存到应用目录，原文件可以移动或删除。</p>
+                <p>其他来源的格式不兼容？把压缩包和转换说明一起交给 AI，转成可用的 ZIP 后再导入。</p>
                 <button id="copy-pet-conversion-prompt" class="secondary-button compact-button" type="button">复制转换说明</button>
               </div>
-              <p>格式不兼容时，把压缩包和转换说明一起发给 AI，转成可用的 ZIP 后再拖入。</p>
-              <p id="pet-import-help-status" class="pet-import-help-status" role="status" hidden></p>
-            </div>
-            <div class="pet-library-footer">
-              <p id="pet-library-status" class="pet-library-status" role="status">正在读取宠物库…</p>
-              <button id="remove-pet" class="danger-button" type="button" disabled>删除当前宠物</button>
-            </div>
+            </details>
+            <p id="pet-import-help-status" class="pet-import-help-status" role="status" hidden></p>
           </section>
+          <div class="general-subsection-heading">
+            <h3>显示与尺寸</h3>
+            <p>控制宠物是否显示，以及素材的大小和清晰度。</p>
+          </div>
           <div class="setting-list">
             <label class="setting-row">
-              <span><strong>显示桌面宠物</strong><small>关闭后仍可通过托盘打开任务列表和设置。</small></span>
-              <input type="checkbox" data-path="appearance.showPet" />
-            </label>
-            <label class="setting-row">
-              <span><strong>显示额度卡片</strong><small>点击宠物打开任务列表时，在宠物旁显示当前 AI 服务的通用使用限额。</small></span>
-              <input type="checkbox" data-path="appearance.showUsageCard" />
-            </label>
-            <label class="setting-row">
-              <span><strong>宠物与任务面板始终置顶</strong><small>让任务状态保持在其他窗口上方。</small></span>
-              <input type="checkbox" data-path="appearance.alwaysOnTop" />
+              <span><strong>显示桌面宠物</strong><small>关闭后仍可通过托盘打开所选浮窗、任务列表和设置。</small></span>
+              <input type="checkbox" role="switch" data-path="appearance.showPet" />
             </label>
             <label class="setting-row pet-size-row">
               <span><strong>宠物大小</strong><small>调整宠物在桌面上的显示尺寸。</small></span>
@@ -556,6 +621,12 @@
                 <option value="smooth">平滑</option>
               </select>
             </label>
+          </div>
+          <div class="general-subsection-heading">
+            <h3>动画与拖动</h3>
+            <p>调整动态效果和拖动宠物时的响应。</p>
+          </div>
+          <div class="setting-list">
             <label class="setting-row select-row">
               <span><strong>动态效果</strong><small>可跟随系统的“减少动态效果”设置。</small></span>
               <select data-path="appearance.pet.reducedMotion">
@@ -566,24 +637,91 @@
             </label>
             <label class="setting-row">
               <span><strong>允许甩动</strong><small>快速释放宠物后继续按当前速度滑动。</small></span>
-              <input type="checkbox" data-path="appearance.pet.flingEnabled" />
+              <input type="checkbox" role="switch" data-path="appearance.pet.flingEnabled" />
             </label>
             <label class="setting-row">
               <span><strong>碰到屏幕边缘反弹</strong><small>仅在甩动过程中生效，宠物始终留在可见区域。</small></span>
-              <input type="checkbox" data-path="appearance.pet.bounceEnabled" />
+              <input type="checkbox" role="switch" data-path="appearance.pet.bounceEnabled" />
+            </label>
+          </div>
+        </section>
+
+        <section id="desktop-windows" class="settings-section" data-settings-page="desktop-windows" hidden>
+          <div class="section-heading">
+            <div>
+              <h2>任务与额度</h2>
+              <p>设置点击宠物时显示的任务列表、额度卡片和置顶方式。</p>
+            </div>
+          </div>
+          <div class="general-subsection-heading">
+            <h3>点击宠物时显示</h3>
+            <p>分别选择任务列表和额度卡片；全部关闭时点击宠物不弹出浮窗。设置自动保存。</p>
+          </div>
+          <div class="setting-list">
+            <label class="setting-row">
+              <span><strong>显示任务列表</strong><small>点击宠物时展示任务浮窗。关闭后仍可从托盘菜单手动打开任务列表。</small></span>
+              <input type="checkbox" role="switch" data-path="appearance.showTaskPanel" />
+            </label>
+            <label class="setting-row">
+              <span><strong>显示额度卡片</strong><small>点击宠物时展示当前 AI 服务的通用使用限额，也可以单独显示。</small></span>
+              <input type="checkbox" role="switch" data-path="appearance.showUsageCard" />
+            </label>
+          </div>
+          <div class="general-subsection-heading">
+            <h3>窗口行为</h3>
+            <p>控制桌面宠物、任务列表和额度卡片的置顶方式。</p>
+          </div>
+          <div class="setting-list">
+            <label class="setting-row">
+              <span><strong>宠物与任务浮窗始终置顶</strong><small>让宠物、任务列表和额度卡片保持在其他窗口上方。</small></span>
+              <input type="checkbox" role="switch" data-path="appearance.alwaysOnTop" />
+            </label>
+          </div>
+        </section>
+
+        <section id="notebook" class="settings-section" data-settings-page="notebook" hidden>
+          <div class="section-heading"><div><h2>记事板</h2><p>集中管理计划与灵感，独立显示，也可以让 AI 帮你记录。</p></div></div>
+          <div class="general-subsection-heading">
+            <h3>显示与外观</h3>
+            <p>记事板单独显示，不随宠物点击或焦点切换收起。</p>
+          </div>
+          <div class="setting-list">
+            <label class="setting-row">
+              <span><strong>显示记事板</strong><small>开启后持续显示，并在下次启动时恢复。可从托盘打开或隐藏。</small></span>
+              <input type="checkbox" role="switch" data-path="appearance.showNotebook" />
+            </label>
+            <label class="setting-row">
+              <span><strong>记事板始终置顶</strong><small>让记事板保持在其他应用上方，独立于宠物和其他浮窗。</small></span>
+              <input type="checkbox" role="switch" data-path="appearance.notebookAlwaysOnTop" />
             </label>
             <label class="setting-row select-row">
-              <span><strong>主题</strong><small>应用到任务列表和设置页面。</small></span>
-              <select data-path="appearance.theme">
-                <option value="system">跟随系统</option>
-                <option value="light">浅色</option>
-                <option value="dark">深色</option>
+              <span><strong>记事板样式</strong><small>选择原有样式或半透明的液态玻璃，切换后立即生效。</small></span>
+              <select data-path="appearance.notebookStyle">
+                <option value="classic">原有样式</option>
+                <option value="glass">液态玻璃</option>
               </select>
             </label>
-            <label class="setting-row" id="open-at-login-row">
-              <span><strong>Windows 登录后自动启动</strong><small id="open-at-login-help">安装正式版本后可用。</small></span>
-              <input type="checkbox" data-path="startup.openAtLogin" />
-            </label>
+          </div>
+          <div class="general-subsection-heading">
+            <h3>AI 写入</h3>
+            <p>连接支持 MCP 的 AI 应用，让 AI 查询、填写和补充记事；你仍可随时手动编辑。</p>
+          </div>
+          <div class="setting-list">
+            <div class="setting-row">
+              <span><strong>连接到 Codex</strong><small id="notebook-mcp-status" role="status">自动填写记事板连接配置。使用时保持 Agent Pet 运行。</small></span>
+              <div class="notebook-connection-actions">
+                <button id="connect-notebook-codex" class="primary-button compact-button" type="button">一键连接 Codex</button>
+                <button id="copy-notebook-mcp" class="secondary-button compact-button" type="button">其他 AI：复制配置</button>
+              </div>
+            </div>
+          </div>
+          <div class="general-subsection-heading">
+            <h3>本地存档</h3>
+          </div>
+          <div class="storage-location">
+            <div class="storage-location-heading"><strong>记事板存档</strong><small>计划、灵感、完成快照与归档记录保存在本机；点击路径打开目录。</small></div>
+            <button id="notebook-path" class="storage-path-button" type="button" disabled>正在读取位置…</button>
+            <p id="notebook-location-status" class="storage-location-status" role="status"></p>
           </div>
         </section>
 

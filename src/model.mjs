@@ -1,6 +1,9 @@
 import path from "node:path";
 import { parseRemoteRequest } from "./remote-request.mjs";
 import { cleanUserText, makePreview, makeTitle, normalizeMessageText } from "./text.mjs";
+import {
+  pendingInputs, registerInputRequest, resolveInputReplies, resolveInputResult, supersedeInputRequests,
+} from "./codex-input-requests.mjs";
 
 function sourceValue(source) {
   return typeof source === "string" ? source : "";
@@ -165,6 +168,7 @@ export function createSession(meta, filePath, recordTimestamp) {
     pendingTaskId: null,
     pendingTaskSequence: 0,
     userMessageContext: null,
+    inputRequests: new Map(),
   };
 }
 
@@ -219,9 +223,15 @@ function touch(session, timestamp) {
 
 function setPhase(session, phase, timestamp) {
   const turn = ensureTurn(session, session.activeTurnId, timestamp);
+  if (["completed", "failed", "interrupted"].includes(turn.executionStatus)) return;
+  if (Date.parse(timestamp) < Date.parse(turn.lastActivityAt)) return;
+  turn.executionStatus = "in_progress";
   turn.phase = phase;
   turn.lastActivityAt = timestampFromValue(timestamp, turn.lastActivityAt);
-  session.status.phase = phase;
+  Object.assign(session.status, {
+    petStatus: "running", executionStatus: "in_progress", phase,
+    waitingFor: null, unread: false, confidence: "high",
+  });
   touch(session, timestamp);
 }
 
@@ -243,6 +253,7 @@ function lifecycleStart(session, payload, timestamp) {
     turn.turnId = turnId;
     session.turns.set(turnId, turn);
     session.pendingTaskId = null;
+    supersedeInputRequests(session, turnId);
   } else {
     turn = ensureTurn(session, turnId, startedAt);
   }
@@ -306,6 +317,9 @@ function lifecycleComplete(session, payload, timestamp) {
 
 function lifecycleAbort(session, payload, timestamp) {
   const turn = ensureTurn(session, payload.turn_id, timestamp);
+  for (const request of session.inputRequests.values()) {
+    if (request.turnId === turn.turnId) request.questions.clear();
+  }
   const completedAt = timestampFromValue(payload.completed_at, timestamp);
   turn.executionStatus = "interrupted";
   turn.phase = "finished";
@@ -330,6 +344,9 @@ function lifecycleAbort(session, payload, timestamp) {
 
 function lifecycleFailure(session, payload, timestamp) {
   const turn = ensureTurn(session, payload.turn_id, timestamp);
+  for (const request of session.inputRequests.values()) {
+    if (request.turnId === turn.turnId) request.questions.clear();
+  }
   const completedAt = timestampFromValue(payload.completed_at, timestamp);
   const errorMessage = String(payload.message || payload.error?.message || payload.reason || "执行失败");
   turn.executionStatus = "failed";
@@ -379,7 +396,7 @@ function lifecycleFailure(session, payload, timestamp) {
 
 function userMessage(session, payload, timestamp) {
   const raw = payload.message ?? payload.text ?? payload.content;
-  const text = cleanUserText(raw);
+  const text = cleanUserText(resolveInputReplies(session, raw));
   if (!text) return;
   session.latestUserText = text;
   if (session.titleSource === "fallback") {
@@ -398,6 +415,7 @@ function userMessage(session, payload, timestamp) {
       messageAt - contextAt <= 30_000;
     session.userMessageContext = null;
     if (belongsToActiveTurn || !activeTurn.userText || activeTurn.userText === text) {
+      supersedeInputRequests(session, session.activeTurnId);
       activeTurn.userText = text;
       activeTurn.submittedAt ||= timestampFromValue(timestamp, session.updatedAt);
       activeTurn.lastActivityAt = timestampFromValue(timestamp, activeTurn.lastActivityAt);
@@ -422,8 +440,9 @@ function completedUserMessage(session, payload, timestamp) {
   if (payload.item?.type !== "UserMessage") return;
   if (payload.thread_id && String(payload.thread_id) !== session.sessionId) return;
   const turnId = String(payload.turn_id || session.activeTurnId || "");
-  const text = cleanUserText(payload.item.content);
+  const text = cleanUserText(resolveInputReplies(session, payload.item.content));
   if (!turnId || !text) return;
+  if (turnId === session.activeTurnId) supersedeInputRequests(session, turnId);
 
   // Typed items identify their turn explicitly. Do not use the pending-message
   // heuristic here: another user item can belong to the same running turn.
@@ -457,6 +476,7 @@ function agentMessage(session, payload, timestamp) {
   const text = normalizeMessageText(payload.message ?? payload.text ?? payload.content);
   if (!text) return;
   const turn = ensureTurn(session, payload.turn_id || session.activeTurnId, timestamp);
+  if (Date.parse(timestamp) < Date.parse(turn.lastActivityAt)) return;
   turn.assistantPreview = makePreview(text);
   turn.lastActivityAt = timestampFromValue(timestamp, turn.lastActivityAt);
   if (payload.phase === "final_answer" || payload.phase === "final") {
@@ -468,7 +488,8 @@ function agentMessage(session, payload, timestamp) {
 }
 
 function waitingInput(session, payload, timestamp) {
-  const waitingFor = payload.waiting_for || payload.kind || "user";
+  const waitingFor = payload.waiting_for || payload.kind
+    || (/approval|permission/.test(payload.type) ? "approval" : "user");
   const phase = /approval|permission/i.test(String(waitingFor))
     ? "waiting_approval"
     : "waiting_answer";
@@ -486,6 +507,23 @@ function waitingInput(session, payload, timestamp) {
     confidence: "high",
   };
   touch(session, timestamp);
+}
+
+function completedItem(session, payload, timestamp) {
+  if (payload.item?.type === "UserMessage") {
+    completedUserMessage(session, payload, timestamp);
+    return;
+  }
+  if (!payload.item?.id || !session.activeTurnId) return;
+  if (payload.thread_id && payload.thread_id !== session.sessionId) return;
+  if (payload.turn_id && payload.turn_id !== session.activeTurnId) return;
+  if (payload.item.type === "AgentMessage") {
+    agentMessage(session, { ...payload.item, turn_id: payload.turn_id }, timestamp);
+  } else if (["Reasoning", "ContextCompaction"].includes(payload.item.type)) {
+    setPhase(session, "reasoning", timestamp);
+  } else if (["CommandExecution", "FileChange", "McpToolCall", "ImageView", "Extension", "SubAgentActivity"].includes(payload.item.type)) {
+    setPhase(session, "tool_running", timestamp);
+  }
 }
 
 export function applyRecord(session, record) {
@@ -506,7 +544,7 @@ export function applyRecord(session, record) {
         lifecycleAbort(session, payload, timestamp);
         break;
       case "item_completed":
-        completedUserMessage(session, payload, timestamp);
+        completedItem(session, payload, timestamp);
         break;
       case "user_message":
         userMessage(session, payload, timestamp);
@@ -532,8 +570,11 @@ export function applyRecord(session, record) {
         }
         break;
     }
-  } else if (record?.type === "response_item" && session.activeTurnId) {
-    if (["function_call", "custom_tool_call", "tool_search_call"].includes(payload.type)) {
+  } else if (record?.type === "response_item") {
+    if (["function_call_output", "custom_tool_call_output"].includes(payload.type)) {
+      resolveInputResult(session, payload);
+    } else if (session.activeTurnId && ["function_call", "custom_tool_call", "tool_search_call"].includes(payload.type)) {
+      registerInputRequest(session, payload);
       setPhase(session, "tool_running", timestamp);
     }
   }
@@ -637,7 +678,8 @@ function taskStatus(executionStatus) {
 
 export function taskSnapshot(session, turn) {
   if (!turn) return null;
-  const status = taskStatus(turn.executionStatus);
+  const inputs = pendingInputs(session, turn.turnId);
+  const status = inputs.length ? "needs_input" : taskStatus(turn.executionStatus);
   const remoteRequest = parseRemoteRequest(turn.userText);
   const question = remoteRequest?.request || turn.userText;
   return {
@@ -663,9 +705,10 @@ export function taskSnapshot(session, turn) {
     latestResponse: turn.assistantFinal || turn.assistantPreview,
     status,
     canAcknowledge: ["completed", "failed", "interrupted", "unknown"].includes(status),
-    phase: turn.phase,
+    phase: inputs.length ? "waiting_answer" : turn.phase,
+    ...(inputs.length ? { pendingInputQuestions: inputs } : {}),
     waitingFor:
-      status === "needs_input" && session.activeTurnId === turn.turnId
+      inputs.length ? "user" : status === "needs_input" && session.activeTurnId === turn.turnId
         ? session.status.waitingFor
         : null,
     submittedAt: turn.submittedAt || turn.startedAt,
@@ -682,6 +725,7 @@ export function sessionTaskSnapshots(session) {
 }
 
 export function sessionSnapshot(session) {
+  const inputs = pendingInputs(session);
   return {
     sessionId: session.sessionId,
     sessionKey: session.sessionKey,
@@ -699,7 +743,10 @@ export function sessionSnapshot(session) {
     title: session.title,
     latestUserText: session.latestUserText,
     latestAssistantText: session.latestAssistantText,
-    status: { ...session.status },
+    status: { ...session.status, ...(inputs.length ? {
+      petStatus: "needs_input", phase: "waiting_answer", waitingFor: "user", unread: true,
+    } : {}) },
+    ...(inputs.length ? { pendingInputQuestions: inputs } : {}),
     activeTurn: publicTurn(session.turns.get(session.activeTurnId)),
     lastTurn: publicTurn(session.turns.get(session.lastTurnId)),
     createdAt: session.createdAt,

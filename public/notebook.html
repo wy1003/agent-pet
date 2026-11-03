@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>记事板 · Agent Pet</title>
+    <link rel="stylesheet" href="/notebook.css" />
+  </head>
+  <body>
+    <main class="notebook" aria-label="记事板">
+      <div class="glass-material" aria-hidden="true" hidden>
+        <canvas class="glass-blur"></canvas>
+        <div class="glass-lens"><canvas></canvas></div>
+        <svg class="glass-filter" xmlns="http://www.w3.org/2000/svg">
+          <defs><filter id="notebook-refraction" x="-10%" y="-10%" width="120%" height="120%" color-interpolation-filters="sRGB">
+            <feTurbulence type="fractalNoise" baseFrequency="0.018" numOctaves="2" seed="8" result="ripple"/>
+            <feDisplacementMap in="SourceGraphic" in2="ripple" scale="9" xChannelSelector="R" yChannelSelector="G"/>
+          </filter></defs>
+        </svg>
+      </div>
+      <header class="board-toolbar">
+        <div class="board-tabs" role="tablist" aria-label="记事分类">
+          <button id="tab-plans" role="tab" aria-selected="true" aria-controls="plans-panel" data-tab="plans">计划</button>
+          <button id="tab-ideas" role="tab" aria-selected="false" aria-controls="ideas-panel" tabindex="-1" data-tab="ideas">灵感</button>
+        </div>
+        <button id="back-to-plans" class="back-button" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg><span id="back-label">计划</span></button>
+        <div class="board-actions">
+          <button id="add-note" class="icon-button" aria-label="添加计划" title="添加计划"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+          <button id="edit-plan" class="icon-button" aria-label="编辑计划" title="编辑计划" hidden><svg viewBox="0 0 24 24"><path d="m14 5 5 5M4 20l5-1L20 8a2 2 0 0 0-5-5L4 14Z"/></svg></button>
+          <button id="cancel-plan-edit" class="toolbar-text-button" type="button" hidden>取消</button>
+          <button id="save-plan-edit" class="toolbar-save-button" type="button" hidden>保存</button>
+          <button id="restore-plan" class="toolbar-text-button" type="button" hidden>移回计划</button>
+          <button id="delete-plan" class="icon-button" type="button" aria-label="删除归档计划" title="删除" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/></svg></button>
+          <button id="collapse-board" class="icon-button" type="button" aria-label="收起为圆球，显示未完成计划数" title="收起为圆球"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg></button>
+          <button id="close-board" class="icon-button" aria-label="隐藏记事板" title="隐藏记事板"><svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17"/></svg></button>
+        </div>
+      </header>
+      <p id="notebook-error" class="notebook-error" role="alert" hidden></p>
+      <p id="storage-warning" class="storage-warning" role="status" hidden></p>
+      <button id="retry-notebook" class="text-button retry-notebook" type="button" hidden>重新读取</button>
+      <section id="plans-panel" class="board-panel" role="tabpanel" aria-labelledby="tab-plans" tabindex="0">
+        <h2 id="archive-heading" class="archive-heading" hidden>归档</h2>
+        <div id="plan-list" class="plan-list" aria-label="计划，重要优先，其次按写入时间从新到旧排列"></div>
+      </section>
+      <section id="plan-detail-panel" class="board-panel plan-detail-panel" aria-labelledby="detail-title" hidden>
+        <div class="detail-heading"><h2 id="detail-title" tabindex="-1"></h2><textarea id="detail-title-input" class="inline-title-input" rows="1" maxlength="120" aria-label="计划标题" aria-describedby="detail-edit-error" placeholder="计划标题" hidden></textarea><button id="detail-important" class="importance-button" aria-label="标记重要" aria-pressed="false"></button></div>
+        <p id="detail-edit-error" class="detail-edit-error" role="alert" hidden></p>
+        <p id="detail-content" class="detail-content" aria-label="具体事项"></p>
+        <textarea id="detail-content-input" class="inline-content-input" rows="5" maxlength="10000" aria-label="具体事项" aria-describedby="detail-edit-error" placeholder="写下具体步骤、注意事项或预期结果…" hidden></textarea>
+        <details id="plan-history" class="plan-history" hidden><summary>操作记录</summary><div id="history-list"></div></details>
+      </section>
+      <section id="ideas-panel" class="board-panel" role="tabpanel" aria-labelledby="tab-ideas" tabindex="0" hidden>
+        <div id="idea-list" class="idea-list"></div>
+      </section>
+      <footer class="board-footer">
+        <div id="archive-actions" class="archive-actions" hidden><button id="archive-completed" type="button" class="text-button" hidden>归档已完成</button><button id="view-archive" type="button" class="text-button">归档</button></div>
+        <dl id="detail-metadata" class="detail-metadata" aria-label="计划时间信息" hidden>
+          <div><dt>写入</dt><dd><time id="detail-created"></time></dd></div>
+          <div><dt>截止</dt><dd><button id="detail-deadline" class="detail-deadline-button" type="button" aria-haspopup="dialog"><span>未设置</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3v4m8-4v4M4 10h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Z"/></svg></button></dd></div>
+          <div id="completed-metadata" hidden><dt>完成</dt><dd><time id="detail-completed"></time></dd></div>
+          <div id="archived-metadata" hidden><dt>归档</dt><dd><time id="detail-archived"></time></dd></div>
+        </dl>
+        <p id="notebook-storage-status">正在读取本地记事…</p>
+        <div id="board-status" class="board-status" role="status" hidden></div>
+      </footer>
+      <dialog id="note-editor" aria-labelledby="editor-title">
+        <form id="note-form">
+          <div class="editor-heading"><h2 id="editor-title">添加计划</h2><button id="cancel-note" type="button" class="icon-button" aria-label="取消"><svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17"/></svg></button></div>
+          <div id="plan-title-field" hidden><label for="plan-title-input">标题</label><input id="plan-title-input" type="text" maxlength="120" placeholder="给计划起一个简洁的标题" /></div>
+          <label for="note-content" id="editor-label">准备做些什么？</label>
+          <textarea id="note-content" rows="4" maxlength="240" required placeholder="写下一个具体的小目标…"></textarea>
+          <div id="plan-options" hidden>
+            <div class="editor-deadline"><label for="plan-deadline-button">截止时间 <small>选填</small></label><button id="plan-deadline-button" class="deadline-button" type="button" aria-haspopup="dialog"><span>未设置</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3v4m8-4v4M4 10h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Z"/></svg></button><input id="plan-deadline-input" type="hidden" /><input id="plan-deadline-time-input" type="hidden" /></div>
+            <label class="editor-important"><input id="plan-important-input" type="checkbox" />标记重要，优先显示</label>
+          </div>
+          <p id="editor-error" role="alert" hidden></p>
+          <div class="editor-actions"><small>保存到本机</small><button id="save-note" type="submit" class="save-button">添加</button></div>
+        </form>
+      </dialog>
+      <dialog id="delete-confirm" aria-labelledby="delete-title"><h2 id="delete-title" class="delete-title">删除归档计划？</h2><p id="delete-plan-name"></p><p class="delete-description">完整内容和完成记录将一并删除，无法恢复。</p><p id="delete-error" class="delete-error" role="alert" hidden></p><div class="editor-actions"><button id="cancel-delete" class="text-button" type="button">取消</button><button id="confirm-delete" class="save-button danger-button" type="button">删除</button></div></dialog>
+      <dialog id="deadline-picker" class="deadline-picker" aria-labelledby="deadline-picker-title">
+        <form novalidate>
+          <div class="deadline-heading"><h2 id="deadline-picker-title">截止时间</h2><button id="deadline-dismiss" type="button" class="icon-button" aria-label="取消设置截止时间"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button></div>
+          <div class="calendar-toolbar"><strong id="deadline-month-label" aria-live="polite"></strong><div class="calendar-navigation"><button id="deadline-today" type="button" class="text-button">今天</button><button id="deadline-previous" type="button" class="icon-button" aria-label="上个月"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></button><button id="deadline-next" type="button" class="icon-button" aria-label="下个月"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6"/></svg></button></div></div>
+          <div class="calendar-weekdays" aria-hidden="true"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+          <div id="deadline-days" role="grid" aria-labelledby="deadline-month-label"></div>
+          <div class="deadline-time-row"><label for="deadline-time-input" class="deadline-time-label">时间 <small>选填</small></label><div id="deadline-time-fields" class="deadline-time-fields"><input id="deadline-time-input" type="text" maxlength="8" placeholder="不设时间" autocomplete="off" spellcheck="false" aria-describedby="deadline-time-hint deadline-picker-error" /><button id="deadline-clear-time" type="button" class="icon-button" aria-label="清除时间，保留日期" title="清除时间" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button></div></div>
+          <div class="deadline-time-assist"><div id="deadline-time-shortcuts"><span id="deadline-time-hint">24 小时制</span><div class="time-presets" role="group" aria-label="快捷设置时间"><button type="button" data-deadline-time="09:00" aria-pressed="false">09:00</button><button type="button" data-deadline-time="12:00" aria-pressed="false">12:00</button><button type="button" data-deadline-time="18:00" aria-pressed="false">18:00</button></div></div><p id="deadline-picker-error" role="alert" hidden></p></div>
+          <div class="deadline-picker-actions"><button id="deadline-unset" type="button" class="text-button">不设置</button><button id="deadline-confirm" type="submit" class="save-button">确定</button></div>
+        </form>
+      </dialog>
+    </main>
+    <button id="notebook-orb" class="notebook-orb" type="button" aria-label="展开记事板，正在读取计划数量" title="展开记事板；拖动可移动" hidden>
+      <span id="notebook-orb-count" class="orb-count" aria-hidden="true">…</span>
+      <span class="orb-label" aria-hidden="true">计划</span>
+    </button>
+    <script type="module" src="/notebook.js"></script>
+  </body>
+</html>

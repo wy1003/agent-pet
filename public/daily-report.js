@@ -106,7 +106,7 @@ function normalizeVariants(result) {
 }
 
 function reportMetadata(result) {
-  const source = result.source === "codex" ? "Codex 整理" : "本地整理";
+  const source = result.source === "local" ? "本地整理" : result.generation?.modelId ? `AI 整理 · ${result.generation.modelId}` : "AI 整理";
   const cacheState = result.fromCache ? "已保存" : "刚刚更新";
   const taskCount = Math.max(0, Number(result.taskCount) || 0);
   const currentTaskCount = Math.max(taskCount, Number(result.currentTaskCount) || 0);
@@ -156,7 +156,7 @@ function showError({ keepReport = false } = {}) {
   reportOutput.hidden = true;
   reportMeta.textContent = "";
   finishBusyState();
-  setFeedback("请检查 Codex 是否可用，然后点击“更新日报”。", "error");
+  setFeedback("请在设置中检查 AI 连接，然后点击“更新日报”。", "error");
 }
 
 function showReport(result) {

@@ -184,3 +184,66 @@ test("continuing a chat updates the pet count and only notifies for the new comp
   assert.equal(mobile.length, 2);
   assert.equal(collector.getTasks()[0].status, "completed");
 });
+
+test("async questions reach task cards, pet attention and notifications while work continues", async (t) => {
+  const { file, collector, subscribe, windows, mobile } = await fixture(t);
+  const pet = new PetStateController();
+  await collector.scanOnce(); subscribe();
+  pet.handleEvent("snapshot", {tasks: collector.getTasks()});
+  for (const kind of ["task.created", "task.updated", "task.removed"]) {
+    collector.on(kind, value => pet.handleEvent(kind, value));
+  }
+  await appendFile(file, line("event_msg", {type:"task_started",turn_id:"turn-1"}) + userItem());
+  await collector.scanOnce();
+  const ask = call => line("response_item", {type:"function_call",name:"request_user_input_async",call_id:call,
+    arguments:JSON.stringify({questions:[{title:"请选择方案"}]})})
+    + line("response_item",{type:"function_call_output",call_id:call,output:'{"accepted":true}'});
+  await appendFile(file, ask("question-1") + line("response_item", {type:"custom_tool_call",name:"exec",call_id:"work"}));
+  await collector.scanOnce(); await flushEvents();
+  assert.equal(collector.getTasks()[0].status,"needs_input");
+  assert.equal(collector.getTasks()[0].phase,"waiting_answer");
+  assert.equal(pet.snapshot().state,"waiting");
+  assert.equal(windows.length,1);
+  assert.equal(windows[0].task.status,"needs_input");
+  assert.equal(mobile.length,1);
+
+  await appendFile(file, line("event_msg", {type:"item_completed",turn_id:"turn-1",item:{type:"Reasoning",id:"still-working"}}));
+  await collector.scanOnce(); await flushEvents();
+  assert.equal(collector.getTasks()[0].status,"needs_input");
+  assert.equal(windows.length,1,"ongoing activity does not repeat the same question notification");
+  await appendFile(file, ask("question-2"));
+  await collector.scanOnce(); await flushEvents();
+  assert.equal(windows.length,2,"a second unanswered question in the same turn also notifies");
+
+  const reply = call => line("event_msg", {type:"item_completed",thread_id:"typed-session",turn_id:"turn-1",item:{type:"UserMessage",id:`answer-${call}`,
+    content:[{type:"text",text:`<send_user_message_question_reply>${JSON.stringify([{questionItemId:JSON.stringify(["request_user_input_async",call,0]),answer:"方案一"}])}</send_user_message_question_reply>`}]}});
+  await appendFile(file,reply("question-1"));
+  await collector.scanOnce(); await flushEvents();
+  assert.equal(collector.getTasks()[0].pendingInputQuestions.length,1);
+  assert.equal(windows.length,2,"answering one question does not renotify the remaining question");
+  await appendFile(file,reply("question-2"));
+  await collector.scanOnce(); await flushEvents();
+  assert.equal(collector.getTasks()[0].status,"running");
+  assert.equal(collector.getTasks()[0].question,question);
+  assert.equal(pet.snapshot().state,"running");
+  assert.equal(windows.length,2);
+  await appendFile(file,line("event_msg",{type:"task_complete",turn_id:"turn-1",last_agent_message:"已完成"}));
+  await collector.scanOnce(); await flushEvents();
+  assert.equal(collector.getTasks()[0].status,"completed");
+  assert.equal(windows.length,3);
+});
+
+test("question tool outputs are read selectively and rejected or answered requests clear attention", async (t) => {
+  const {file,collector}=await fixture(t);
+  await appendFile(file,line("event_msg",{type:"task_started",turn_id:"turn-1"})+userItem());
+  await collector.scanOnce();
+  for(const [name,output] of [["request_user_input_async",'{"accepted":false}'],["request_user_input",'{"answers":{}}']]) {
+    const callId=name;
+    await appendFile(file,line("response_item",{type:"function_call",name,call_id:callId,arguments:'{"questions":[{"title":"选择？"}]}'}));
+    await collector.scanOnce();
+    assert.equal(collector.getTasks()[0].status,"needs_input");
+    await appendFile(file,line("response_item",{type:"function_call_output",call_id:callId,output}));
+    await collector.scanOnce();
+    assert.equal(collector.getTasks()[0].status,"running");
+  }
+});

@@ -64,11 +64,15 @@ function recordTypePrefix(line) {
   };
 }
 
-function lineCanAffectSession(line, ownerResolved) {
+function lineCanAffectSession(line, ownerResolved, inputRequests) {
   if (!ownerResolved) return true;
   const { prefix, type } = recordTypePrefix(line);
   if (["session_meta", "turn_context", "event_msg"].includes(type)) return true;
   if (type !== "response_item") return false;
+  if (/"type"\s*:\s*"(?:function_call_output|custom_tool_call_output)"/.test(prefix)) {
+    const callId = /"call_id"\s*:\s*"([^"]+)"/.exec(prefix)?.[1];
+    return Boolean(callId && inputRequests?.has(callId));
+  }
   return /"type"\s*:\s*"(?:function_call|custom_tool_call|tool_search_call)"/.test(prefix);
 }
 
@@ -554,13 +558,13 @@ export class CodexActivityCollector extends EventEmitter {
         const split = splitCompleteLines(complete);
         pending = Buffer.from(split.pending);
         if (pending.length > MAX_BUFFERED_LINE_BYTES
-          && !lineCanAffectSession(pending, fileState.ownerResolved)) {
+          && !lineCanAffectSession(pending, fileState.ownerResolved, this.sessions.get(fileState.sessionId)?.inputRequests)) {
           pending = Buffer.alloc(0);
           fileState.skippingLine = true;
         }
         let skipRemainder = false;
         for (const line of split.lines) {
-          if (!line.length || !lineCanAffectSession(line, fileState.ownerResolved)) continue;
+          if (!line.length || !lineCanAffectSession(line, fileState.ownerResolved, this.sessions.get(fileState.sessionId)?.inputRequests)) continue;
           this.#processLine(filePath, fileState, line);
           const owner = fileState.sessionId ? this.sessions.get(fileState.sessionId) : null;
           if (fileState.ignored || (

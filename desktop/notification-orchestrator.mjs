@@ -96,6 +96,7 @@ export class NotificationOrchestrator {
 
   async handleTask(task) {
     if (!task?.taskId || task.threadSource === "subagent") return;
+    const previousTask = this.tasks.get(task.taskId);
     this.tasks.set(task.taskId, task);
     const previousStatus = this.statusByTask.get(task.taskId);
     this.statusByTask.set(task.taskId, task.status);
@@ -104,9 +105,14 @@ export class NotificationOrchestrator {
       if (previousStatus !== task.status) this.#prepareTask(task);
       return;
     }
-    if (!NOTIFICATION_EVENT_SET.has(task.status) || previousStatus === task.status) return;
+    const newQuestions = task.status === "needs_input"
+      ? (task.pendingInputQuestions || []).filter(question =>
+        !(previousTask?.pendingInputQuestions || []).some(previous => previous.id === question.id))
+      : [];
+    if (!NOTIFICATION_EVENT_SET.has(task.status) || (previousStatus === task.status && !newQuestions.length)) return;
 
-    const notificationKey = `${task.taskId}:${task.status}`;
+    const questionKey = newQuestions.length ? `:${newQuestions.map(question => question.id).join(",")}` : "";
+    const notificationKey = `${task.taskId}:${task.status}${questionKey}`;
     if (this.notifiedEvents.has(notificationKey)) return;
     this.notifiedEvents.add(notificationKey);
 
