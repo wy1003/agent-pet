@@ -1,6 +1,12 @@
+---
+output:
+  word_document:
+    reference_doc: C:/Users/ASJ/custom-reference.docx
+---
+
 # Agent Pet
 
-**给 Codex 养只桌宠，把任务、计划和灵感留在桌面。**
+**给 Codex / Claude Code 养只桌宠，把任务、计划和灵感留在桌面。**
 
 Agent Pet 是一款 Windows 桌面宠物助手。宠物显示 Codex 的工作状态，在任务完成或需要你回答时提醒；独立记事板用来安排计划、记录灵感，既能手动填写，也能让 AI 帮你整理和写入。离开电脑后，还可以通过微信查看任务结果、继续下指令。
 
@@ -28,12 +34,22 @@ Agent Pet 是一款 Windows 桌面宠物助手。宠物显示 Codex 的工作状
 
 ## 开始使用
 
-本文介绍 `main` 源码 **0.10.4** 的功能，对应安装包尚未发布。下载时请查看 [Releases](https://github.com/wy1003/agent-pet/releases) 中所选版本的发布说明；体验当前源码可按下方步骤运行。
+本文介绍源码 **0.11.3** 的功能，对应安装包尚未发布。下载时请查看 [Releases](https://github.com/wy1003/agent-pet/releases) 中所选版本的发布说明；体验当前源码可按下方步骤运行。
 
 1. 从 [Releases](https://github.com/wy1003/agent-pet/releases) 下载 **Windows x64 安装版**（`Setup`）或免安装版（`Portable`）。
-2. 打开 Codex 和 Agent Pet，桌宠会自动跟踪本机任务。
+2. 打开 Codex / Claude Code 和 Agent Pet，桌宠会同时自动跟踪两种来源的本机会话，无需二选一。
 3. 点击宠物查看任务；右键宠物或使用系统托盘进入设置、打开记事板或查看今日工作总结。
 4. 在设置中开启需要的窗口与通知。使用记事板、AI 写入和微信续问的方法见下文。
+
+### Codex 与 Claude 同时自动发现（源码 0.11.3）
+
+启动桌宠即同时读取两种来源的本地会话日志，无需选择“当前智能体”。Claude 默认读取 `~/.claude/projects`，尊重启动 Agent Pet 时的 `CLAUDE_CONFIG_DIR`。两边任务一起显示并标注来源；CLI / VS Code 必须在该配置根写入主会话日志。首次发现最近 24 小时的轮次，后续增量跟踪。
+
+桌宠默认自动发现 Node.js 20+，在已有 Claude 配置目录内备份并维护本应用的最小生命周期 Hook，不需要点击安装或填写路径。仅明确 `Stop` 或日志 `end_turn` 确认完成；缺少终态的文字回复等待确认，不先弹问号通知，不靠静默猜测成功。首次配置后请新开 Claude 会话或重载扩展；磁盘配置成功不代表已有会话已加载。缺少 Node、配置冲突或 Hook 被策略禁用时明确降级，只读发现继续，不修改原日志。
+
+额度窗口同时展示 Codex 与 Claude，单侧失败不影响另一侧；没有可靠配额就显示不可用/过期，不推算余额。“默认新建代理”仅决定无所属会话的新任务使用谁，不是任务采集开关；既有会话按来源续问，AI 文本服务和模型保持独立。Claude SDK 恢复 **不等于原窗口注入**，受控工具边界也不等于 OS 沙箱。
+
+自动上报不修改登录、模型、权限，也不自动安装 MCP 或状态栏；可在设置中关闭，只移除仍匹配记录的自有项。记事板 MCP、状态栏额度与额外事件仍从 **设置 → 智能体与 AI → 可选增强与高级设置** 显式确认安装。自动上报与可选增强不会重复注册生命周期 Hook，分别移除不影响另一项；用户改写的配置拒绝覆盖。[完整权限与恢复说明](docs/USAGE.md#claude-code-接入与恢复)
 
 ### 计划与灵感
 
@@ -65,7 +81,7 @@ Agent Pet 是一款 Windows 桌面宠物助手。宠物显示 Codex 的工作状
 
 不需要固定开头。AI 保存成功后，记事板会自动刷新；使用时保持 Agent Pet 运行，窗口可以隐藏。手动新增和编辑仍然可用，AI 工具只提供查询、新增与修改，完成和归档由你操作。[查看连接、工具与排错说明](docs/NOTEBOOK_MCP.md)
 
-AI 写入由所连接的 AI 应用完成；应用内一键补充和微信灵感自动同步尚未接入。播报文案和工作总结使用的模型则在 **设置 → 智能体与 AI → 文本生成** 中选择，支持 Codex、DeepSeek 和兼容接口。
+AI 写入由所连接的 AI 应用完成；应用内一键补充和微信灵感自动同步尚未接入。播报文案和工作总结使用的模型则在 **设置 → 智能体与 AI → 文本生成** 中选择，支持 Codex、Claude Code、DeepSeek 和兼容接口。
 
 ### 微信里继续一个任务
 
@@ -115,4 +131,4 @@ npm run companion
 - [更新记录](CHANGELOG.md)：源码变更、验证范围与安装包发布状态。
 - [反馈问题](https://github.com/wy1003/agent-pet/issues) · QQ 交流群：`650561994`
 
-当前任务接入支持 Codex Desktop，兼容 Codex SDK / CC GUI 任务。开源协议：[MIT](LICENSE)。
+当前源码同时提供 Codex 与 Claude Code 日志自动发现，自动维护最小生命周期 Hook，另有可选增强及受控 SDK 执行；验证结果与 Claude 原窗口控制的边界见[验证摘要](docs/CLAUDE_VERIFICATION.md)。开源协议：[MIT](LICENSE)。

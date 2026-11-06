@@ -35,6 +35,16 @@ test(`the real HTTP service serves ${pageName} and every transitive static modul
   }
   for (const entry of entries) await visit(new URL(entry, base).href);
   if (pageName === "settings") {
+    for (const id of ["claude-status", "claude-install", "claude-remove", "claude-preview"]) {
+      assert.ok(html.includes(`id="${id}"`), `Claude settings exposes ${id}`);
+    }
+    assert.doesNotMatch(html, /data-claude-setting="usageProviderId"/);
+    assert.match(html, /生命周期 Hook 自动确认完成/);
+    assert.match(html, /data-claude-setting="autoLifecycleHooks"/);
+    assert.match(html, /可选增强/);
+    for (const key of ["executablePath", "nodePath", "defaultProviderId", "enableStatusline"]) {
+      assert.ok(html.includes(`data-claude-setting="${key}"`));
+    }
     assert.ok(visited.has(`${base}/pet-library-controller.js`));
     assert.ok(visited.has(`${base}/pet-library-view.js`));
     assert.ok(visited.has(`${base}/ai-settings.js`));

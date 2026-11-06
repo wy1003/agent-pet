@@ -200,6 +200,7 @@ export class RemoteControlController {
     }
     this.registry = options.registry;
     this.executor = options.executor;
+    this.getDefaultProvider = options.getDefaultProvider || (() => "codex");
     this.reply = options.reply || (async (inbound, message) => options.sendReply(message.text, {
       inbound,
       ...message,
@@ -688,6 +689,7 @@ export class RemoteControlController {
       });
       return { ok: false, reason: "desktop_approval_required" };
     }
+    if (job.kind === "new") job.providerId = await this.getDefaultProvider();
     const laneKey = job.kind === "new"
       ? `project:${job.projectCode}`
       : `session:${job.sessionCode}`;
@@ -704,7 +706,8 @@ export class RemoteControlController {
           : "已接收",
       job,
       [
-        position > 1 ? `当前排队位置：${position}` : "等待提交到 Codex。",
+        position > 1 ? `当前排队位置：${position}`
+          : (job.providerId === "claude" || job.session?.providerId === "claude") ? "等待提交到 Claude Code（SDK）。" : "等待提交到 Codex。",
       ],
     ), job.inbound, {
       kind: job.kind === "new"
@@ -852,6 +855,7 @@ export class RemoteControlController {
 
     job.state = "running";
     const result = await this.executor.start({
+      providerId: job.providerId,
       cwd: job.project.cwd,
       prompt: job.prompt,
       signal: controller.signal,

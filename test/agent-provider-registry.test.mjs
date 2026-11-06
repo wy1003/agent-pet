@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { AgentProviderRegistry } from "../desktop/agents/agent-provider-registry.mjs";
 
-test("agent provider registry exposes one channel-neutral active connection", () => {
+test("agent provider registry keeps its legacy selection API without selecting a collection source", () => {
   const registry = new AgentProviderRegistry({ activeProviderId: "codex" })
     .register({
       id: "codex",
@@ -20,13 +20,12 @@ test("agent provider registry exposes one channel-neutral active connection", ()
 
   assert.equal(registry.current().id, "codex");
   assert.equal(registry.current().iconUrl, "/assets/agents/codex.svg");
-  assert.equal(registry.snapshot().providers.find((item) => item.id === "codex").state, "connected");
+  const before = registry.snapshot().providers;
+  assert.deepEqual(before.map(item => [item.id, item.state]), [["codex", "auto"], ["deepseek", "auto"]]);
+  assert.ok(before.every(item => !Object.hasOwn(item, "selected")));
   registry.setActiveProvider("deepseek");
   assert.equal(registry.current().usageProviderId, "deepseek");
-  assert.deepEqual(
-    registry.snapshot().providers.map((item) => [item.id, item.selected]),
-    [["codex", false], ["deepseek", true]],
-  );
+  assert.deepEqual(registry.snapshot().providers, before, "legacy selection cannot change automatic collection state");
 });
 
 test("agent provider registry rejects unknown connections", () => {

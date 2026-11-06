@@ -103,6 +103,7 @@ test("version 8 badge visibility migrates to pet visibility", () => {
 test("global remote control defaults off and migrates the version 12 Weixin switch", () => {
   assert.deepEqual(normalizePreferences({ version: 13 }).remoteControl, {
     enabled: false,
+    defaultProviderId: "codex",
   });
 
   const migrated = normalizePreferences({
@@ -112,7 +113,7 @@ test("global remote control defaults off and migrates the version 12 Weixin swit
     },
   });
   assert.equal(migrated.version, 20);
-  assert.deepEqual(migrated.remoteControl, { enabled: true });
+  assert.deepEqual(migrated.remoteControl, { enabled: true, defaultProviderId: "codex" });
 
   const whitelistOnly = normalizePreferences({
     version: 12,
@@ -120,7 +121,7 @@ test("global remote control defaults off and migrates the version 12 Weixin swit
       weixin: { allowedProjectCodes: ["P001"] },
     },
   });
-  assert.deepEqual(whitelistOnly.remoteControl, { enabled: false });
+  assert.deepEqual(whitelistOnly.remoteControl, { enabled: false, defaultProviderId: "codex" });
 
   const currentVersionWins = normalizePreferences({
     version: 13,
@@ -129,7 +130,7 @@ test("global remote control defaults off and migrates the version 12 Weixin swit
       weixin: { enabled: true, allowedProjectCodes: ["P001"] },
     },
   });
-  assert.deepEqual(currentVersionWins.remoteControl, { enabled: false });
+  assert.deepEqual(currentVersionWins.remoteControl, { enabled: false, defaultProviderId: "codex" });
 });
 
 test("usage card visibility is a global appearance preference", () => {

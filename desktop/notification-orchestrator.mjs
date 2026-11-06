@@ -100,6 +100,7 @@ export class NotificationOrchestrator {
     this.tasks.set(task.taskId, task);
     const previousStatus = this.statusByTask.get(task.taskId);
     this.statusByTask.set(task.taskId, task.status);
+    if (task.providerId === "claude" && task.status === "unknown" && task.completionPending) return;
 
     if (ACTIVE_STATUSES.has(task.status)) {
       if (previousStatus !== task.status) this.#prepareTask(task);

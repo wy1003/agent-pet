@@ -28,7 +28,7 @@
  */
 
 export const TASK_WINDOW_SIZE = Object.freeze({ width: 350, height: 380, minHeight: 58 });
-export const USAGE_WINDOW_SIZE = Object.freeze({ width: 314, height: 150, minHeight: 118, maxHeight: 300 });
+export const USAGE_WINDOW_SIZE = Object.freeze({ width: 314, height: 300, minHeight: 118, maxHeight: 640 });
 export const NOTEBOOK_WINDOW_SIZE = Object.freeze({ width: 380, height: 460 });
 export const NOTEBOOK_ORB_SIZE = Object.freeze({ width: 76, height: 76 });
 export const PET_MENU_SIZE = Object.freeze({ width: 176, height: 198 });

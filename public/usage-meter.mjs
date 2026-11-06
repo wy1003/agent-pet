@@ -23,6 +23,7 @@ export function formatUsageWindow(minutes) {
 }
 
 export function formatResetTime(value) {
+  if (value == null || value === "") return "重置时间未知";
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return "重置时间未知";
   return `重置于 ${new Intl.DateTimeFormat("zh-CN", {
@@ -35,6 +36,7 @@ export function formatResetTime(value) {
 }
 
 export function formatSyncTime(value) {
+  if (value == null || value === "") return "等待同步";
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return "等待同步";
   return `已同步 · ${new Intl.DateTimeFormat("zh-CN", {
@@ -76,17 +78,18 @@ function createMeter(windowData) {
   return meter;
 }
 
-function renderCodexQuota(snapshot, { onRefresh }) {
-  const card = node("article", "usage-card usage-card-codex");
+function renderCodexQuota(snapshot, { onRefresh = async () => {} } = {}) {
+  const isClaude = snapshot.viewType === "claude-quota";
+  const card = node("article", `usage-card usage-card-${isClaude ? "claude" : "codex"}`);
   card.dataset.status = snapshot.status || "unknown";
   const header = node("header", "usage-card-header");
   const identity = node("div", "usage-card-identity");
-  identity.append(node("strong", "usage-provider-name", snapshot.displayName || "Codex"));
+  identity.append(node("strong", "usage-provider-name", snapshot.displayName || (isClaude ? "Claude Code" : "Codex")));
   if (snapshot.planLabel) identity.append(node("span", "usage-plan-badge", snapshot.planLabel));
   const refresh = node("button", "usage-refresh", "↻");
   refresh.type = "button";
   refresh.title = "刷新额度";
-  refresh.setAttribute("aria-label", "刷新 Codex 通用额度");
+  refresh.setAttribute("aria-label", `刷新 ${isClaude ? "Claude Code" : "Codex"} 通用额度`);
   refresh.addEventListener("click", async () => {
     refresh.disabled = true;
     refresh.classList.add("is-refreshing");
@@ -100,9 +103,11 @@ function renderCodexQuota(snapshot, { onRefresh }) {
   header.append(identity, refresh);
   card.append(header);
 
-  if (snapshot.status === "ready" && snapshot.windows?.length) {
+  const windows = (snapshot.windows || []).filter(window => typeof window.usedPercent === "number"
+    && Number.isFinite(window.usedPercent) && typeof window.remainingPercent === "number" && Number.isFinite(window.remainingPercent));
+  if (snapshot.status === "ready" && windows.length) {
     const meters = node("div", "usage-meter-list");
-    meters.append(...snapshot.windows.map(createMeter));
+    meters.append(...windows.map(createMeter));
     card.append(meters);
   } else {
     card.append(node("p", "usage-empty-message", snapshot.message || "暂无通用额度数据。"));
@@ -113,6 +118,7 @@ function renderCodexQuota(snapshot, { onRefresh }) {
     node("span", "usage-sync-dot"),
     node("span", "usage-sync-label", formatSyncTime(snapshot.syncedAt)),
   );
+  if (isClaude) footer.append(node("span", "usage-source-label", `来源：${snapshot.source || "未知"}`));
   card.append(footer);
   return card;
 }
@@ -126,6 +132,7 @@ function renderUnavailable(snapshot) {
   return card;
 }
 
+registerUsageRenderer("claude-quota", renderCodexQuota);
 registerUsageRenderer("codex-quota", renderCodexQuota);
 registerUsageRenderer("unavailable", renderUnavailable);
 

@@ -1,33 +1,45 @@
 import { renderUsageMeter } from "./usage-meter.mjs";
 
 const root = document.querySelector("#usage-card-root");
+const sources = [
+  { providerId: "codex", displayName: "Codex", viewType: "codex-quota" },
+  { providerId: "claude", displayName: "Claude Code", viewType: "claude-quota" },
+];
 let loading = false;
 
 function reportSize() {
   requestAnimationFrame(() => {
     window.companion?.resizeUsageCard?.({
       width: Math.ceil(document.documentElement.scrollWidth),
-      height: Math.ceil(document.documentElement.scrollHeight),
+      // Measure content, not the viewport: the facade may clamp height on small screens.
+      height: Math.ceil(root.getBoundingClientRect().height) + 14,
     });
   });
 }
 
+function renderProviders(providers) {
+  root.replaceChildren(...providers.map(snapshot => {
+    const source = sources.find(item => item.providerId === snapshot.providerId);
+    // The quota renderers keep provider identity and retry controls even when unavailable.
+    return renderUsageMeter({ ...snapshot, ...(source || {}) }, {
+      onRefresh: () => loadUsage({ force: true }),
+    });
+  }));
+}
+
 async function loadUsage({ force = false } = {}) {
-  if (loading || !window.companion?.getUsage) return;
+  if (loading || !window.companion?.getAllUsage) return;
   loading = true;
   root.setAttribute("aria-busy", "true");
   try {
-    const snapshot = await window.companion.getUsage({ force });
-    root.replaceChildren(renderUsageMeter(snapshot, {
-      onRefresh: () => loadUsage({ force: true }),
-    }));
+    const snapshot = await window.companion.getAllUsage({ force });
+    renderProviders(snapshot.providers);
   } catch {
-    root.replaceChildren(renderUsageMeter({
-      providerId: "codex",
-      viewType: "unavailable",
-      status: "error",
-      message: "暂时无法读取通用额度。",
-    }, { onRefresh: () => loadUsage({ force: true }) }));
+    renderProviders(sources.map(source => ({
+      ...source,
+      status: "unavailable",
+      message: "暂时无法读取该来源额度，请稍后刷新。",
+    })));
   } finally {
     root.setAttribute("aria-busy", "false");
     loading = false;

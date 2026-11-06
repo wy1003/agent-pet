@@ -18,7 +18,9 @@ export const DEFAULT_PREFERENCES = Object.freeze({
   ai: normalizeAiPreferences(),
   agent: {
     activeProviderId: "codex",
+    usageProviderId: "active",
   },
+  claude: { executablePath: "", nodePath: "", enableStatusline: false, autoLifecycleHooks: true },
   rules: {
     needs_input: true,
     completed: true,
@@ -69,6 +71,7 @@ export const DEFAULT_PREFERENCES = Object.freeze({
   },
   remoteControl: {
     enabled: false,
+    defaultProviderId: "codex",
   },
   dailyReport: {
     contentLevel: "standard",
@@ -198,6 +201,13 @@ export function normalizePreferences(value) {
         && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(agent.activeProviderId)
         ? agent.activeProviderId.toLowerCase()
         : defaults.agent.activeProviderId,
+      usageProviderId: oneOf(agent.usageProviderId, ["active", "codex", "claude"], defaults.agent.usageProviderId),
+    },
+    claude: {
+      executablePath: typeof input.claude?.executablePath === "string" ? input.claude.executablePath.trim().slice(0, 2000) : "",
+      nodePath: typeof input.claude?.nodePath === "string" ? input.claude.nodePath.trim().slice(0, 2000) : "",
+      enableStatusline: boolean(input.claude?.enableStatusline, false),
+      autoLifecycleHooks: boolean(input.claude?.autoLifecycleHooks, true),
     },
     rules,
     notifications: {
@@ -304,6 +314,7 @@ export function normalizePreferences(value) {
       },
     },
     remoteControl: {
+      defaultProviderId: oneOf(remoteControl.defaultProviderId, ["codex", "claude"], defaults.remoteControl.defaultProviderId),
       enabled: boolean(
         remoteControl.enabled,
         Number(input.version || 0) < 13

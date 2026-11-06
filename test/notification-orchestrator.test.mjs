@@ -62,6 +62,19 @@ function fixture(getPreferences = () => preferences()) {
   return { orchestrator, prepared, enqueued, windows, records, remote };
 }
 
+test("Claude text awaiting a completion signal stays silent, then completes exactly once", async () => {
+  const { orchestrator, windows } = fixture();
+  const task = { taskId: "claude:pending", providerId: "claude", status: "running" };
+  await orchestrator.handleTask(task);
+  await orchestrator.handleTask({ ...task, status: "unknown", completionPending: true });
+  assert.equal(windows.length, 0);
+  await orchestrator.handleTask({ ...task, status: "completed", completionPending: false });
+  await orchestrator.handleTask({ ...task, status: "completed", completionPending: false });
+  assert.equal(windows.length, 1);
+  await orchestrator.handleTask({ taskId: "codex:unknown", status: "unknown" });
+  assert.equal(windows.length, 2);
+});
+
 test("initial snapshot establishes a baseline and active tasks are pre-generated", async () => {
   const { orchestrator, prepared, enqueued, windows } = fixture();
   const task = { taskId: "task-1", status: "running", projectName: "项目甲" };

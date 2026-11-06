@@ -7,6 +7,7 @@ function normalizeProvider(provider) {
   return Object.freeze({
     id,
     displayName,
+    connectionState: provider.connectionState === "unverified" ? "unverified" : "",
     description: String(provider.description || "").trim(),
     badge: String(provider.badge || "").trim().slice(0, 12),
     iconUrl: String(provider.iconUrl || "").trim(),
@@ -54,8 +55,8 @@ export class AgentProviderRegistry {
       providers: [...this.providers.values()].map((provider) => ({
         ...provider,
         capabilities: { ...provider.capabilities },
-        selected: provider.id === this.activeProviderId,
-        state: provider.id === this.activeProviderId ? "connected" : "available",
+        // Collection capability is not proof of authentication or a discovered session.
+        state: "auto",
       })),
     };
   }

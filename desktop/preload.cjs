@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld("companion", {
     return () => ipcRenderer.removeListener("companion:panel-shown", listener);
   },
   getUsage: (options) => ipcRenderer.invoke("usage:get", options),
+  getAllUsage: (options) => ipcRenderer.invoke("usage:get-all", options),
   resizeUsageCard: (size) => ipcRenderer.send("usage:resize-card", size),
   onUsageCardShown: (callback) => {
     const listener = () => callback();
@@ -89,6 +90,11 @@ contextBridge.exposeInMainWorld("companion", {
     ipcRenderer.on("ai:status", listener);
     return () => ipcRenderer.removeListener("ai:status", listener);
   },
+  getClaudeStatus: () => ipcRenderer.invoke("claude:status"),
+  previewClaudeIntegration: () => ipcRenderer.invoke("claude:preview"),
+  installClaudeIntegration: () => ipcRenderer.invoke("claude:install"),
+  removeClaudeIntegration: () => ipcRenderer.invoke("claude:remove"),
+  updateClaudeSettings: (value) => ipcRenderer.invoke("claude:update", value),
   selectAgentProvider: (id) => ipcRenderer.invoke("agent-providers:select", id),
   updateSettings: (patch) => ipcRenderer.invoke("settings:update", patch),
   resetSettings: () => ipcRenderer.invoke("settings:reset"),

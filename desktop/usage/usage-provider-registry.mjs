@@ -19,6 +19,23 @@ export class UsageProviderRegistry {
     this.activeProviderId = value;
   }
 
+  async getAllUsage(options = {}) {
+    const providers = await Promise.all([...this.providers.values()].map(async (provider) => {
+      try {
+        return { ...await provider.getUsage(options), providerId: provider.id };
+      } catch {
+        // Do not leak provider errors (which may contain local paths or credentials).
+        return {
+          providerId: provider.id,
+          viewType: "unavailable",
+          status: "unavailable",
+          message: "暂时无法读取该来源额度，请稍后刷新。",
+        };
+      }
+    }));
+    return { providers };
+  }
+
   async getCurrentUsage(options = {}) {
     const provider = this.providers.get(this.activeProviderId);
     if (!provider) {

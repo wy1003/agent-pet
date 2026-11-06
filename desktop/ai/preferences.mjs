@@ -1,6 +1,7 @@
 export const AI_CONNECTIONS = Object.freeze([
-  { id: "agent", name: "跟随当前智能体连接" },
+  { id: "agent", name: "沿用既有 AI 来源" },
   { id: "codex", name: "Codex" },
+  { id: "claude", name: "Claude Code" },
   { id: "deepseek", name: "DeepSeek" },
   { id: "compatible", name: "其他兼容接口" },
 ]);

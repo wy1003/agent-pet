@@ -132,7 +132,7 @@ export function createCollectorServer(collector, options = {}) {
   collector.on("task.updated", onTaskUpdated);
   collector.on("task.removed", onTaskRemoved);
 
-  const server = http.createServer(async (request, response) => {
+  const handleRequest = async (request, response) => {
     const url = new URL(request.url || "/", `http://${request.headers.host || `${host}:${port}`}`);
 
     if (request.method === "OPTIONS") {
@@ -268,6 +268,17 @@ export function createCollectorServer(collector, options = {}) {
     }
 
     sendJson(response, 404, { error: "not_found" });
+  };
+  const server = http.createServer(async (request, response) => {
+    try { await handleRequest(request, response); }
+    catch {
+      // Provider errors can contain prompts, credentials or local file paths.
+      // Once SSE headers are sent, terminate instead of attempting another 500.
+      clients.delete(response);
+      if (response.destroyed || response.writableEnded) return;
+      if (response.headersSent) response.end();
+      else sendJson(response, 500, { error: "collector_request_failed" });
+    }
   });
 
   return {

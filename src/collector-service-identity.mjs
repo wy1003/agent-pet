@@ -33,5 +33,6 @@ export const STANDALONE_COLLECTOR_IDENTITY = Object.freeze({
 export function isCompatibleCollectorHealth(value, expected = DESKTOP_COLLECTOR_IDENTITY) {
   if (!value || value.ok !== true) return false;
   return ["service", "protocolVersion", "appVersion", "owner", "stateNamespace"]
-    .every((key) => value[key] === expected[key]);
+    .every((key) => value[key] === expected[key])
+    && (expected.capabilities || []).every((capability) => Array.isArray(value.capabilities) && value.capabilities.includes(capability));
 }

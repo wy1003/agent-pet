@@ -21,9 +21,12 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { CodexActivityCollector } from "../src/collector.mjs";
+import { createDesktopCollectors, createDesktopProviders, createDesktopExecutor, DUAL_COLLECTOR_IDENTITY,
+  claudeSessionActivity, agentSelectionPatch } from "./agents/desktop-runtime.mjs";
+import { installClaudeSettingsIpc, executableResourcePath } from "./agents/claude-settings.mjs";
+import { createClaudeLifecycleController } from "./agents/claude-lifecycle.mjs";
+import { resolveNodeExecutable, resolveClaudeConfigDirectory } from "./claude/runtime.mjs";
 import {
-  DESKTOP_COLLECTOR_IDENTITY,
   isCompatibleCollectorHealth,
 } from "../src/collector-service-identity.mjs";
 import {
@@ -33,8 +36,6 @@ import {
 import { createCollectorServer } from "../src/server.mjs";
 import { PhrasePoolGenerator } from "./phrase-generator.mjs";
 import { AiTextService } from "./ai/text-service.mjs";
-import { CodexTextProvider } from "./ai/codex-provider.mjs";
-import { HttpTextProvider } from "./ai/http-provider.mjs";
 import { AiSettingsController, installAiSettingsIpc } from "./ai/settings-controller.mjs";
 import { DailyReportGenerator } from "./daily-report.mjs";
 import { NotificationOrchestrator } from "./notification-orchestrator.mjs";
@@ -110,9 +111,6 @@ import {
 import { agentPetIconPngBuffer } from "./app-icon.mjs";
 import { AppUpdater } from "./app-updater.mjs";
 import { resolveAppRuntime } from "./app-runtime.mjs";
-import { UsageProviderRegistry } from "./usage/usage-provider-registry.mjs";
-import { CodexUsageProvider } from "./usage/codex-usage-provider.mjs";
-import { AgentProviderRegistry } from "./agents/agent-provider-registry.mjs";
 
 import { PetWindowFacade } from "./windows/pet-window.mjs";
 import { PetMenuWindowFacade } from "./windows/pet-menu-window.mjs";
@@ -176,6 +174,7 @@ let speechIdleTimer = null;
 let tray = null;
 let serviceUrl = DEFAULT_SERVICE_URL;
 let ownedCollector = null;
+let desktopProviders = null;
 let ownedServer = null;
 let collectorReadyPromise = Promise.resolve();
 let quitting = false;
@@ -194,6 +193,7 @@ let petStateController = null;
 let petLibrary = null;
 let selectedPet = null;
 let preferenceStore = null;
+let claudeLifecycle = null;
 let voiceLibrary = null;
 let gptSovitsService = null;
 let gptSovitsIdleTimer = null;
@@ -402,7 +402,9 @@ function activateAgentProvider(preferences = preferenceStore?.get()) {
   } catch {
     provider = agentProviderRegistry.setActiveProvider("codex");
   }
-  usageProviderRegistry?.setActiveProvider(provider.usageProviderId);
+  // Resolve old single-source API preferences only; collection and desktop usage stay dual-source.
+  usageProviderRegistry?.setActiveProvider(preferences.agent.usageProviderId === "active"
+    ? provider.usageProviderId : preferences.agent.usageProviderId);
   sendPetState();
   if (usageWindow?.isVisible()) usageWindow.refresh();
   return provider;
@@ -637,12 +639,10 @@ function petStatePayload(state = petStateController?.snapshot()) {
     ...requestedState,
     state: resolveAvailablePetState(requestedState.state, availableStates),
     animationProfile: PET_ANIMATION_PROFILE,
-    agent: agentProviderRegistry?.current()
-      ? {
-          providerId: agentProviderRegistry.current().id,
-          displayName: agentProviderRegistry.current().displayName,
-        }
-      : null,
+    agent: {
+      providerId: "multi-agent",
+      displayName: "Codex + Claude Code",
+    },
     pet: {
       id: pet.id,
       format: pet.format,
@@ -852,7 +852,7 @@ async function collectorServiceHealth(baseUrl) {
 
 async function ensureCollectorService() {
   const existingHealth = await collectorServiceHealth(DEFAULT_SERVICE_URL);
-  if (isCompatibleCollectorHealth(existingHealth, DESKTOP_COLLECTOR_IDENTITY)) {
+  if (isCompatibleCollectorHealth(existingHealth, DUAL_COLLECTOR_IDENTITY)) {
     collectorReadyPromise = Promise.resolve();
     console.log(`[companion] attached to ${DEFAULT_SERVICE_URL}`);
     return DEFAULT_SERVICE_URL;
@@ -863,9 +863,10 @@ async function ensureCollectorService() {
 
   console.log("[companion] starting the embedded collector");
   const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
-  const collector = new CodexActivityCollector({
+  const { collector } = createDesktopCollectors({
     codexHome,
-    statePath: path.join(app.getPath("userData"), "collector-state.json"),
+    userData: app.getPath("userData"),
+    claudeRoot: path.join(managedRootPath(), "claude"),
     ignoredProjectPaths: defaultIgnoredProjectPaths({
       managedRoot: managedRootPath(),
       localAppData: process.env.LOCALAPPDATA,
@@ -876,7 +877,7 @@ async function ensureCollectorService() {
   let api = createCollectorServer(collector, {
     host: "127.0.0.1",
     port: existingHealth ? 0 : 43123,
-    serviceIdentity: DESKTOP_COLLECTOR_IDENTITY,
+    serviceIdentity: DUAL_COLLECTOR_IDENTITY,
   });
   try {
     await api.start();
@@ -884,14 +885,14 @@ async function ensureCollectorService() {
     if (error?.code !== "EADDRINUSE") throw error;
     await api.stop();
     const racedHealth = await collectorServiceHealth(DEFAULT_SERVICE_URL);
-    if (isCompatibleCollectorHealth(racedHealth, DESKTOP_COLLECTOR_IDENTITY)) {
+    if (isCompatibleCollectorHealth(racedHealth, DUAL_COLLECTOR_IDENTITY)) {
       collectorReadyPromise = Promise.resolve();
       return DEFAULT_SERVICE_URL;
     }
     api = createCollectorServer(collector, {
       host: "127.0.0.1",
       port: 0,
-      serviceIdentity: DESKTOP_COLLECTOR_IDENTITY,
+      serviceIdentity: DUAL_COLLECTOR_IDENTITY,
     });
     await api.start();
   }
@@ -1583,9 +1584,40 @@ function installIpcHandlers() {
   const getNotebookMcpConfig = () => {
     if (!notebookMcpBridge?.ready) throw new Error("记事板连接尚未就绪，请重新启动应用。");
     return notebookMcpConfig({ executable: process.execPath,
-      entry: path.join(HERE, "notebook", "mcp", "stdio.mjs"),
+      entry: executableResourcePath(path.join(HERE, "notebook", "mcp", "stdio.mjs")),
       connectionFile: path.join(app.getPath("userData"), "notebook-mcp-connection.json") });
   };
+  installClaudeSettingsIpc({
+    ipcMain, requireSettingsMainFrame,
+    getPreferences: () => preferenceStore.get(),
+    savePreferences: patch => preferenceStore.update(patch),
+    lifecycleStatus: () => claudeLifecycle?.status(),
+    getStatusOptions: () => ({}),
+    onSaved: async (preferences, patch) => {
+      applyPreferences(preferences);
+      if (patch.claude?.executablePath !== undefined) aiTextService?.configurationChanged();
+      if (patch.claude?.autoLifecycleHooks !== undefined || patch.claude?.nodePath !== undefined) await claudeLifecycle?.sync();
+    },
+    getOptions: async () => {
+      const preferences = preferenceStore.get().claude;
+      return {
+        nodePath: await resolveNodeExecutable(preferences.nodePath).catch(() => ""),
+        bridgePath: executableResourcePath(path.join(HERE, "claude", "hook-bridge.mjs")),
+        statuslineBridgePath: executableResourcePath(path.join(HERE, "claude", "statusline-bridge.mjs")),
+        eventsDir: path.join(managedRootPath(), "claude", "events"),
+        usagePath: path.join(managedRootPath(), "claude", "usage.json"),
+        enableStatusline: preferences.enableStatusline,
+        mcpConfig: getNotebookMcpConfig(),
+      };
+    },
+    confirm: async (action, preview) => {
+      const result = await dialog.showMessageBox({ type: "question", buttons: ["取消", action === "install" ? "安装接入" : "移除接入"],
+        defaultId: 0, cancelId: 0, title: "Claude Code 接入",
+        message: action === "install" ? "向当前 Claude 配置安装 Agent Pet Hook / MCP？" : "移除 Agent Pet 接入并恢复原状态栏？",
+        detail: `${action === "install" ? "仅添加 Agent Pet 管理项；不修改权限或认证。" : "只撤销未被用户改写的管理项，冲突不会覆盖。"}\n${JSON.stringify(preview.paths || {}, null, 2)}\n完成后请重启 CLI / 重新加载 VS Code。` });
+      return result.response === 1;
+    },
+  });
   const notebookCodexConnection = new NotebookCodexConnection({ getConfig: getNotebookMcpConfig, workingDirectory: app.getPath("userData") });
   installNotebookConnectionIpc({ ipcMain, requireSettingsMainFrame, getConnection: () => notebookCodexConnection });
   installNotebookWindowIpc({ ipcMain, window: notebookWindow, controller: notebookWindows });
@@ -1636,6 +1668,11 @@ function installIpcHandlers() {
     if (!usageProviderRegistry) throw new Error("Usage providers are not ready");
     return usageProviderRegistry.getCurrentUsage({ force: options?.force === true });
   });
+  ipcMain.handle("usage:get-all", async (event, options) => {
+    requireTrustedSender(event);
+    if (!usageProviderRegistry) throw new Error("Usage providers are not ready");
+    return usageProviderRegistry.getAllUsage({ force: options?.force === true });
+  });
   ipcMain.on("usage:resize-card", (event, value) => {
     if (usageWindow.ownsSender(event)) usageWindow.resize(value);
   });
@@ -1671,12 +1708,9 @@ function installIpcHandlers() {
     requireSettingsMainFrame(event);
     const provider = agentProviderRegistry?.setActiveProvider(id);
     if (!provider) throw new Error("智能体连接服务尚未就绪");
-    const preferences = await preferenceStore.update({
-      agent: { activeProviderId: provider.id },
-    });
+    const preferences = await preferenceStore.update(agentSelectionPatch(preferenceStore.get(), provider.id));
     applyPreferences(preferences);
     aiTextService?.configurationChanged();
-    void aiTextService?.check();
     return settingsState();
   });
   ipcMain.handle("remote-control:get", (event) => {
@@ -1729,6 +1763,7 @@ function installIpcHandlers() {
     requireTrustedSender(event);
     if (patch && (Object.prototype.hasOwnProperty.call(patch, "remoteControl")
       || Object.prototype.hasOwnProperty.call(patch, "agent")
+      || Object.prototype.hasOwnProperty.call(patch, "claude")
       || Object.prototype.hasOwnProperty.call(patch, "ai"))) {
       throw new Error("Agent and remote-control changes require their dedicated settings APIs");
     }
@@ -1743,6 +1778,7 @@ function installIpcHandlers() {
   ipcMain.handle("settings:reset", async (event) => {
     requireTrustedSender(event);
     const preferences = await preferenceStore.reset();
+    await claudeLifecycle?.sync();
     aiTextService?.configurationChanged();
     void aiTextService?.check();
     await refreshSelectedPet(preferences.appearance.pet.selectedPetId);
@@ -2043,6 +2079,7 @@ function installIpcHandlers() {
 }
 
 async function shutdownOwnedService() {
+  await claudeLifecycle?.close();
   await positionSaveQueue;
   await notebookMcpBridge?.stop();
   await notebookStore?.close();
@@ -2122,26 +2159,15 @@ if (!hasSingleInstanceLock) {
         console.log(`[agent-pet] using compatible managed data root: ${managedDataRoot}`);
       }
       preferenceStore = new PreferenceStore(preferencesPath());
-      agentProviderRegistry = new AgentProviderRegistry({ activeProviderId: "codex" })
-        .register({
-          id: "codex",
-          displayName: "Codex",
-          description: "读取 Codex 任务、会话状态与通用使用限额。",
-          badge: "C",
-          iconUrl: "/assets/agents/codex.svg",
-          accent: "codex",
-          taskSourceId: "codex-desktop",
-          usageProviderId: "codex",
-          remoteExecutorId: "codex",
-          capabilities: { tasks: true, usage: true, remoteControl: true },
-        });
-      // The host only knows the active provider id. Provider-specific collection and UI
-      // stay isolated, so a future DeepSeek adapter can be registered without changing
-      // the task panel or the Codex implementation.
-      usageProviderRegistry = new UsageProviderRegistry({ activeProviderId: "codex" })
-        .register(new CodexUsageProvider({
-          codexHome: process.env.CODEX_HOME || path.join(os.homedir(), ".codex"),
-        }));
+      desktopProviders = createDesktopProviders({
+        codexHome: process.env.CODEX_HOME || path.join(os.homedir(), ".codex"),
+        workingDirectory: copywriterPath(),
+        usagePath: path.join(managedRootPath(), "claude", "usage.json"),
+        getPreferences: () => preferenceStore.get(),
+        loadKey: (connectionId) => secureCredentials.load(`ai.${connectionId}`),
+      });
+      agentProviderRegistry = desktopProviders.agents;
+      usageProviderRegistry = desktopProviders.usage;
       remoteTaskRegistry = new RemoteTaskRegistry(remoteTaskRegistryPath());
       await remoteTaskRegistry.load();
       voiceLibrary = new VoiceLibrary(voiceLibraryPath());
@@ -2185,13 +2211,7 @@ if (!hasSingleInstanceLock) {
       });
       aiTextService = new AiTextService({
         getPreferences: () => preferenceStore.get(),
-        providers: new Map([
-          ["codex", new CodexTextProvider({ workingDirectory: copywriterPath() })],
-          ...["deepseek", "compatible"].map((id) => [id, new HttpTextProvider({
-            id, name: id === "deepseek" ? "DeepSeek" : "兼容接口",
-            loadKey: (connectionId) => secureCredentials.load(`ai.${connectionId}`),
-          })]),
-        ]),
+        providers: desktopProviders.text,
         onStatus: (status) => settingsWindow?.send("ai:status", status),
       });
       aiSettingsController = new AiSettingsController({
@@ -2211,6 +2231,14 @@ if (!hasSingleInstanceLock) {
         cacheDirectory: dailyReportCachePath(),
       });
       const preferences = await preferenceStore.load();
+      claudeLifecycle = createClaudeLifecycleController({
+        getPreferences: () => preferenceStore.get(),
+        getOptions: () => ({
+          configDir: resolveClaudeConfigDirectory(),
+          bridgePath: executableResourcePath(path.join(HERE, "claude", "hook-bridge.mjs")),
+          eventsDir: path.join(managedRootPath(), "claude", "events"),
+        }),
+      });
       activateAgentProvider(preferences);
       remoteCodexExecutor = new CodexRemoteExecutor({
         desktop: process.platform === "win32" ? new CodexDesktopExecutor({
@@ -2237,7 +2265,14 @@ if (!hasSingleInstanceLock) {
       remoteChannelHub.register(weixinChannelAdapter);
       remoteControlController = new RemoteControlController({
         registry: remoteTaskRegistry,
-        executor: remoteCodexExecutor,
+        executor: createDesktopExecutor({
+          codex: remoteCodexExecutor,
+          getPreferences: () => preferenceStore.get(),
+          eventsDir: path.join(managedRootPath(), "claude", "events"),
+          isSessionActive: id => claudeSessionActivity({ owned: Boolean(ownedCollector), claude: ownedCollector }, id),
+          onUsage: event => desktopProviders.claudeUsage.recordRateLimit(event),
+        }),
+        getDefaultProvider: () => preferenceStore.get().remoteControl.defaultProviderId,
         getPolicy: () => preferenceStore.get().remoteControl || {},
         authorizeInbound: (inbound) => remoteChannelHub.isAuthorized(inbound),
         getChannelCapabilities: (channelId, inbound) => (
@@ -2250,6 +2285,7 @@ if (!hasSingleInstanceLock) {
       applyPreferences(preferences);
       installIpcHandlers();
       serviceUrl = await ensureCollectorService();
+      await claudeLifecycle.sync();
       await createWindows();
       desktopWindowsReady = true;
       await notebookWindows.applyPreferences();

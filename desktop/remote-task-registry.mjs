@@ -24,6 +24,11 @@ function normalizedProjectKind(value) {
   return value === "projectless" ? "projectless" : "project";
 }
 
+function sessionIdentity(sessionId) {
+  const providerId = sessionId.startsWith("claude:") ? "claude" : "codex";
+  return { providerId, nativeSessionId: sessionId.replace(/^(claude|codex):/, "") };
+}
+
 function normalizedSessionStatus(value) {
   const status = clean(value?.executionStatus || value?.execution || value?.state, 40);
   if (status === "in_progress") return "running";
@@ -107,7 +112,7 @@ function normalizeStored(value = {}) {
       if (sessionRouteMap.has(routeKey)) ambiguousSessionRoutes.add(routeKey);
       else sessionRouteMap.set(routeKey, code);
     }
-    normalizedSessions.push({ ...item, sessionId, projectCode, code });
+    normalizedSessions.push({ ...item, sessionId, ...sessionIdentity(sessionId), projectCode, code });
   }
   const normalizedDeliveries = deliveries
     .map((item) => normalizeDelivery(item, storedVersion))
@@ -271,6 +276,7 @@ export class RemoteTaskRegistry {
     const now = this.now().toISOString();
     let record = this.state.sessions.find((item) => item.sessionId === sessionId);
     const next = {
+      ...sessionIdentity(sessionId),
       projectCode: projectResult.project.code,
       projectKey: projectResult.project.projectKey,
       projectName: projectResult.project.name,

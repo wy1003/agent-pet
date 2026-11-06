@@ -442,7 +442,7 @@ test("HTTP server provides the local task list UI", async (t) => {
   assert.equal(settingsScript.status, 200);
   const settingsScriptText = await settingsScript.text();
   assert.match(settingsScriptText, /updateSettings/);
-  assert.match(settingsScriptText, /selectAgentProvider/);
+  assert.doesNotMatch(settingsScriptText, /selectAgentProvider/);
   assert.match(settingsScriptText, /renderAgentProviders/);
   assert.match(settingsScriptText, /manageGptSovitsService/);
   assert.match(settingsScriptText, /getGptSovitsServiceStatus/);

@@ -243,6 +243,12 @@ function updateRangeOutput(control) {
 function render(state) {
   settingsState = state;
   renderAgentProviders(state.agentProviders);
+  for (const control of document.querySelectorAll("[data-claude-setting]")) {
+    const key = control.dataset.claudeSetting;
+    const value = key === "defaultProviderId" ? state.preferences.remoteControl.defaultProviderId : state.preferences.claude?.[key];
+    if (control.type === "checkbox") control.checked = Boolean(value);
+    else control.value = value || "";
+  }
   for (const control of controls) {
     if (voiceStyleDirty && voiceStyleControlSet.has(control)) continue;
     const value = valueAtPath(state.preferences, control.dataset.path);
@@ -260,22 +266,19 @@ function render(state) {
 }
 
 function renderAgentProviders(connectionState) {
-  const activeProviderId = String(connectionState?.activeProviderId || "");
   const providers = Array.isArray(connectionState?.providers) ? connectionState.providers : [];
   if (!providers.length) {
     const empty = document.createElement("div");
     empty.className = "agent-provider-placeholder";
-    empty.textContent = "当前版本没有可连接的智能体。";
+    empty.textContent = "正在等待自动采集来源。";
     agentProviderList.replaceChildren(empty);
+    agentProviderStatus.textContent = "来源状态尚不可用。";
     return;
   }
   const cards = providers.map((provider) => {
-    const selected = provider.id === activeProviderId || provider.selected === true;
-    const card = document.createElement("button");
-    card.type = "button";
+    const card = document.createElement("article");
     card.className = "agent-provider-card";
     card.dataset.providerId = provider.id;
-    card.setAttribute("aria-pressed", String(selected));
 
     const icon = document.createElement("span");
     icon.className = "agent-provider-icon";
@@ -294,20 +297,17 @@ function renderAgentProviders(connectionState) {
     const name = document.createElement("strong");
     name.textContent = provider.displayName;
     const description = document.createElement("small");
-    description.textContent = provider.description || "连接后由该智能体提供任务状态。";
+    description.textContent = provider.description || "只读发现本地会话并采集任务状态。";
     copy.append(name, description);
     const status = document.createElement("span");
     status.className = "agent-provider-state";
-    status.textContent = selected ? "已连接" : "连接";
+    status.textContent = "自动采集";
     card.append(icon, copy, status);
     return card;
   });
   agentProviderList.replaceChildren(...cards);
-  const selected = providers.find((provider) => provider.id === activeProviderId);
   agentProviderStatus.dataset.state = "";
-  agentProviderStatus.textContent = selected
-    ? `当前宠物已连接到 ${selected.displayName}。`
-    : "请选择一个智能体建立连接。";
+  agentProviderStatus.textContent = "两个来源同时自动采集，无需切换；尚无会话时等待发现。自动采集不代表已验证登录，额度缺失仅影响对应来源。";
 }
 
 async function loadStorageLocations() {
@@ -1527,30 +1527,52 @@ setInterval(() => {
   if (reconfigureGptSovitsDeviceButton.disabled) refreshGptSovitsRuntimeOptions();
 }, 15_000);
 
-agentProviderList.addEventListener("click", async (event) => {
-  const card = event.target.closest(".agent-provider-card[data-provider-id]");
-  if (!card || !window.companion?.selectAgentProvider) return;
-  const providerId = card.dataset.providerId;
-  if (providerId === settingsState?.agentProviders?.activeProviderId) {
-    const selected = settingsState.agentProviders.providers.find((item) => item.id === providerId);
-    agentProviderStatus.dataset.state = "";
-    agentProviderStatus.textContent = `${selected?.displayName || "当前智能体"} 已经连接。`;
-    return;
-  }
-  for (const button of agentProviderList.querySelectorAll("button")) button.disabled = true;
-  agentProviderStatus.dataset.state = "";
-  agentProviderStatus.textContent = "正在切换智能体连接…";
+const claudeStatus = document.getElementById("claude-status");
+async function refreshClaudeStatus() {
   try {
-    render(await window.companion.selectAgentProvider(providerId));
-    void loadAiSettings();
-    setStatus("saved", "已保存");
-  } catch (error) {
-    agentProviderStatus.dataset.state = "error";
-    agentProviderStatus.textContent = `连接失败：${error.message || "智能体暂时不可用"}`;
-  } finally {
-    for (const button of agentProviderList.querySelectorAll("button")) button.disabled = false;
-  }
-});
+    const { integration, runtime, lifecycle } = await window.companion.getClaudeStatus();
+    const states = { installed: "已安装", "not-installed": "未安装", modified: "管理项已被修改", conflict: "存在冲突", error: "读取失败" };
+    const diagnostics = integration.message || integration.warnings?.length ? "存在诊断提示，请手动预览安装项检查。" : "";
+    const lifecycleStates = { installed: "已配置（已有会话需重载）", "legacy-installed": "复用已有接入", disabled: "已关闭或被客户端策略禁用", "not-detected": "等待发现 Claude 配置", "runtime-unavailable": "未发现 Node.js 20+", "not-installed": "未配置", pending: "等待检查", conflict: "配置冲突，未覆盖", modified: "管理项已修改，未覆盖", error: "配置失败" };
+    claudeStatus.textContent = `自动完成上报：${lifecycleStates[lifecycle?.state] || "待检查"}；可选增强：${states[integration.state] || "状态未知"}；运行时：${runtime.available ? "已发现" : "未发现"}；认证未验证。配置成功不代表当前会话已加载 Hook。${diagnostics}`;
+  } catch { claudeStatus.textContent = "读取可选增强状态失败，请稍后刷新；不代表自动发现已停止。"; }
+}
+for (const control of document.querySelectorAll("[data-claude-setting]")) {
+  control.addEventListener("change", () => {
+    const patch = { [control.dataset.claudeSetting]: control.type === "checkbox" ? control.checked : control.value };
+    setStatus("saving", "正在保存…");
+    saveQueue = saveQueue.then(async () => {
+      await window.companion.updateClaudeSettings(patch);
+      render(await window.companion.getSettings());
+      await refreshClaudeStatus();
+      setStatus("saved", "已保存；自动上报状态见下方，MCP / 状态栏仍需确认安装");
+    }).catch(error => { setStatus("error", `保存失败：${error.message}`); });
+  });
+}
+document.getElementById("claude-refresh").addEventListener("click", refreshClaudeStatus);
+for (const action of ["preview", "install", "remove"]) {
+  document.getElementById(`claude-${action}`).addEventListener("click", async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      await saveQueue;
+      const result = await window.companion[`${action}ClaudeIntegration`]();
+      if (action === "preview") {
+        const output = document.getElementById("claude-preview-output");
+        output.hidden = false;
+        output.textContent = JSON.stringify(result.preview || result, null, 2);
+      }
+      if (result.cancelled) claudeStatus.textContent = "已取消，未修改接入配置。";
+      else if (!result.ok) claudeStatus.textContent = result.message || "接入操作未完成，请检查配置与备份。";
+      else if (action !== "preview") {
+        await refreshClaudeStatus();
+        claudeStatus.textContent += " 操作完成，请重启 Claude CLI / 重新加载 VS Code。";
+      }
+    } catch (error) { claudeStatus.textContent = `接入操作失败：${error.message}`; }
+    finally { button.disabled = false; }
+  });
+}
+void refreshClaudeStatus();
 
 for (const item of navigationItems) {
   item.addEventListener("click", () => showPage(item.dataset.page));

@@ -102,22 +102,44 @@
         </section>
 
         <section id="ai" class="settings-section" data-settings-page="ai" hidden>
-          <div class="section-heading"><div><h2>智能体与 AI</h2><p>选择要跟随的智能体，以及用于生成文案和日报的 AI 服务。</p></div></div>
+          <div class="section-heading"><div><h2>智能体与 AI</h2><p>自动发现两个任务来源，独立设置生成文案和日报的 AI 服务。</p></div></div>
           <div class="general-subsection-heading">
             <h3>任务来源</h3>
-            <p>选择宠物当前跟随的 AI 智能体；任务、会话和额度信息会同步切换。</p>
+            <p>Codex 与 Claude 同时自动采集本地会话，额度并列显示。无需选择来源，也不会改变文本模型或已排队任务。</p>
           </div>
           <div id="agent-provider-list" class="agent-provider-list" aria-live="polite">
-            <div class="agent-provider-placeholder">正在读取可连接的智能体…</div>
+            <div class="agent-provider-placeholder">正在读取自动采集来源…</div>
           </div>
           <p id="agent-provider-status" class="agent-provider-status" role="status"></p>
+          <div class="setting-list">
+            <label class="setting-row select-row"><span><strong>默认新建代理</strong><small>仅影响之后收到的新任务；续问仍交给原会话来源。</small></span><select data-claude-setting="defaultProviderId"><option value="codex">Codex</option><option value="claude">Claude Code</option></select></label>
+          </div>
+          <div class="general-subsection-heading"><h3>Claude Code 自动发现</h3><p>日志自动发现会话，生命周期 Hook 自动确认完成，无需手动安装或选择来源。只备份并维护本应用状态上报项，不修改认证、模型、权限，不自动安装 MCP 或状态栏。</p></div>
+          <label class="setting-row"><span><strong>自动确认 Claude 任务完成</strong><small>自动发现 Node.js 20+ 并维护生命周期 Hook。首次配置后请新开 Claude 会话或重载扩展；关闭只移除本应用自动管理项，日志发现仍保留。</small></span><input type="checkbox" role="switch" data-claude-setting="autoLifecycleHooks" /></label>
+          <details class="claude-advanced">
+            <summary>可选增强与高级设置（Hook / 状态栏）</summary>
+          <div class="setting-list">
+            <label class="field"><span>Claude 运行时路径（可选）</span><input type="text" data-claude-setting="executablePath" placeholder="留空自动发现 Claude 可执行文件" autocomplete="off" /></label>
+            <label class="field"><span>Node.js 路径覆盖（可选，留空自动发现）</span><input type="text" data-claude-setting="nodePath" placeholder="例如 C:\Program Files\nodejs\node.exe" autocomplete="off" /><small>使用 Node.js 20 或更新版本；不是 PowerShell、Git Bash 或 Agent Pet 主程序。</small></label>
+            <label class="setting-row"><span><strong>安装时接入状态栏额度采集</strong><small>保留原状态栏输出。只观测可靠配额，缺失或过期不会显示为 0%。变更后需移除旧接入再安装；保存不会改写已安装配置。Windows 默认使用 Git Bash。</small></span><input type="checkbox" role="switch" data-claude-setting="enableStatusline" /></label>
+          </div>
+          <div class="ai-connection-result" aria-live="polite">
+            <p id="claude-status" role="status">接入状态尚未读取；未验证认证。</p>
+            <p>SDK 新建和恢复不是向原 CLI / VS Code 窗口注入。原会话活动或状态未知时拒绝恢复；仅停止本应用掌控的请求。</p>
+            <button id="claude-refresh" type="button" class="secondary-button">刷新接入状态</button>
+            <button id="claude-preview" type="button" class="secondary-button">预览安装项</button>
+            <button id="claude-install" type="button" class="secondary-button">安装接入…</button>
+            <button id="claude-remove" type="button" class="secondary-button">移除接入…</button>
+            <pre id="claude-preview-output" hidden></pre>
+          </div>
+          </details>
           <div class="general-subsection-heading">
             <h3>文本生成</h3>
             <p>用于播报文案和工作日报，可独立于任务来源选择。</p>
           </div>
           <div id="ai-settings" class="ai-settings">
             <div class="setting-list">
-              <label class="setting-row select-row"><span><strong>生成服务</strong><small>跟随当前智能体，或单独指定文本生成服务。</small></span><select id="ai-connection" aria-label="AI 连接"></select></label>
+              <label class="setting-row select-row"><span><strong>生成服务</strong><small>沿用既有 AI 来源或单独指定服务，不随自动采集来源改变。</small></span><select id="ai-connection" aria-label="AI 连接"></select></label>
               <label class="setting-row select-row"><span><strong>模型选择方式</strong><small>更改仅影响新任务，运行中的任务继续使用原模型。</small></span><select id="ai-model-mode"><option value="default">跟随连接默认模型</option><option value="pinned">指定模型</option></select></label>
               <label id="ai-pinned-row" class="setting-row select-row" hidden><span><strong>指定模型</strong><small>模型不可用时保留选择，并提示重新选择。</small></span><select id="ai-model" aria-label="指定模型"></select></label>
             </div>

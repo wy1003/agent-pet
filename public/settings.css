@@ -626,19 +626,7 @@ h2 {
   border-radius: 12px;
   color: var(--ink);
   background: var(--card);
-  cursor: pointer;
   text-align: left;
-  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
-}
-
-.agent-provider-card:hover {
-  border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
-  transform: translateY(-1px);
-}
-
-.agent-provider-card[aria-pressed="true"] {
-  border-color: var(--line);
-  background: var(--card);
   box-shadow: var(--group-shadow);
 }
 
@@ -697,11 +685,6 @@ h2 {
   font-size: 9px;
   font-weight: 800;
   white-space: nowrap;
-}
-
-.agent-provider-card[aria-pressed="true"] .agent-provider-state {
-  color: var(--accent);
-  background: var(--accent-soft);
 }
 
 .agent-provider-placeholder {

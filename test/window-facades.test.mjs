@@ -201,6 +201,19 @@ test("quota-only popovers survive drag suspension and release when unfocused", a
   assert.equal(h.nativeWindows.length, 2);
 });
 
+test("dual usage window grows past one card and clamps to a small work area through its facade", async () => {
+  const h = createWindowHarness();
+  await h.usage.ensureCreated();
+  h.usage.getWorkArea = () => ({ x: 0, y: 0, width: 800, height: 900 });
+  h.usage.resize({ height: 520 });
+  assert.equal(h.usage.getBounds().height, 520);
+  h.usage.getWorkArea = () => ({ x: 0, y: 0, width: 400, height: 360 });
+  h.usage.resize({ height: 520 });
+  assert.equal(h.usage.getBounds().height, 336);
+  assert.equal("webContents" in h.usage, false);
+  h.usage.destroy();
+});
+
 test("moving focus between popovers preserves both and close hides the group", async () => {
   const h = createWindowHarness();
   await h.coordinator.show();
