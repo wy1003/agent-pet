@@ -1,9 +1,3 @@
----
-output:
-  word_document:
-    reference_doc: C:/Users/ASJ/custom-reference.docx
----
-
 # Agent Pet 使用指南
 
 [返回项目首页](../README.md) · [微信指令指南](WEIXIN_REMOTE_CONTROL.md)

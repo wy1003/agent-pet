@@ -12,7 +12,8 @@ const status = await import('../desktop/claude/statusline-bridge.mjs').catch(err
 const q = value => `'${value.replaceAll("'", "'\"'\"'")}'`;
 const json = async file => JSON.parse(await fs.readFile(file, 'utf8'));
 async function fixture(t, statuslineShell = 'bash') {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agent-pet-status-'中文 "));
+  // Exercise the tilde in Windows 8.3 paths even when the local TEMP has none.
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agent-pet-status-RUNNER~1-'中文 "));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const configDir = path.join(root, 'config'); await fs.mkdir(configDir);
   const originalFile = path.join(root, 'original.mjs');
@@ -61,6 +62,28 @@ test('snapshot includes only necessary fields and never invents quota zero', () 
   assert.deepEqual(snapshot, { capturedAt: '2026-01-01T00:00:00.000Z', session_id: 's', rate_limits: { five_hour: { used_percentage: 0, resets_at: 123 }, seven_day: { used_percentage: 42 } }, cost: { total_cost_usd: 1.2 } });
   assert.deepEqual(status.usageSnapshot({}).rate_limits, {});
   assert.deepEqual(status.usageSnapshot({ rate_limits: { five_hour: { used_percentage: null }, seven_day: { used_percentage: '20' } } }).rate_limits, {});
+});
+
+test('quoted tildes remain literal in statusline paths and arguments', async t => {
+  const o = await fixture(t);
+  const executable = process.execPath.replaceAll('\\', '/');
+  const script = path.join(o.root, 'original.mjs').replaceAll('\\', '/');
+  for (const literal of [q('~/literal'), '"~/literal"', q('RUNNER~1'), q('~')]) {
+    const original = { type: 'command', command: `${q(executable)} ${q(script)} ${literal}` };
+    const command = status.makeStatusline({ ...o, original }).command;
+    const payload = command.match(/--agent-pet-statusline-v1' '([A-Za-z0-9_-]+)'/)?.[1];
+    assert.ok(payload, 'bash launcher must carry the original arguments');
+    const expected = literal.slice(1, -1);
+    assert.deepEqual(JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')).argv, [executable, script, expected]);
+  }
+});
+
+test('unquoted tilde expansion remains unsupported', async t => {
+  const o = await fixture(t);
+  for (const suffix of ['~', '~/script.mjs', '~user/script.mjs', '~+/script.mjs', 'PATH=~/bin']) {
+    const original = { type: 'command', command: `${q(process.execPath.replaceAll('\\', '/'))} ${suffix}` };
+    assert.throws(() => status.makeStatusline({ ...o, original }), { code: 'UNSUPPORTED_STATUSLINE' }, suffix);
+  }
 });
 
 test('launcher uses the declared host and Windows children are explicitly windowless', async t => {

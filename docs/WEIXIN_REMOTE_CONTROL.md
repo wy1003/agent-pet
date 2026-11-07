@@ -1,12 +1,6 @@
----
-output:
-  word_document:
-    reference_doc: C:/Users/ASJ/custom-reference.docx
----
-
 # 微信远程指令指南
 
-> 更新日期：2026-11-07。适用于 0.12.3 源码，安装包能力以对应版本发布说明为准。
+> 更新日期：2026-11-07。适用于 0.12.4 源码，安装包能力以对应版本发布说明为准。
 
 Agent Pet 支持从微信向 Codex 或 Claude Code 提交文本要求，并将执行结果返回微信。Windows 上继续桌面端持有的 Codex 会话时，请求直接交给该 Codex Desktop 进程；Claude 使用受控 SDK 新建或恢复，不向原 CLI / VS Code 窗口实时注入。
 

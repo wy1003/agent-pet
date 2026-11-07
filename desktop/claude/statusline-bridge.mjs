@@ -19,7 +19,8 @@ function absolute(value) {
   return path.resolve(value);
 }
 // Deliberately a small shell-literal subset, not a shell interpreter. Reject all
-// expansions/operators, including inside quotes, rather than change their meaning.
+// expansions/operators rather than change their meaning. Quoted tildes are
+// literal characters, including the tilde in Windows 8.3 paths such as RUNNER~1.
 function originalArgv(original, bridgePath, shell) {
   if (original === undefined || original === null) return null;
   if (!object(original) || original.type !== 'command' || typeof original.command !== 'string') unsupported();
@@ -28,7 +29,7 @@ function originalArgv(original, bridgePath, shell) {
       || (original.refreshInterval !== undefined && (typeof original.refreshInterval !== 'number' || original.refreshInterval < 1))
       || (original.hideVimModeIndicator !== undefined && typeof original.hideVimModeIndicator !== 'boolean')) unsupported();
   const command = shell === 'powershell' ? original.command.replace(/^\s*&\s+/, '') : original.command;
-  if (!command || /[\0\r\n$`|;&<>*?~#]/.test(command) || command.includes(MARKER) || command.includes(FLAG)) unsupported();
+  if (!command || /[\0\r\n$`|;&<>*?#]/.test(command) || command.includes(MARKER) || command.includes(FLAG)) unsupported();
   const args = []; let token = '', quote = '', started = false;
   for (let i = 0; i < command.length; i++) {
     const c = command[i];
@@ -41,7 +42,7 @@ function originalArgv(original, bridgePath, shell) {
     }
     if (c === "'" || c === '"') { quote = c; started = true; }
     else if (/\s/.test(c)) { if (started) { args.push(token); token = ''; started = false; } }
-    else if (c === '\\') unsupported();
+    else if (c === '\\' || c === '~') unsupported();
     else { token += c; started = true; }
   }
   if (quote) unsupported();
