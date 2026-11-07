@@ -51,7 +51,14 @@ export async function resolveCodexExecutable(explicitPath = "", options = {}) {
     const latest = installed.filter(Boolean).sort((a, b) => b.modifiedAt - a.modifiedAt)[0];
     if (latest) return latest.executable;
   }
+  const executableName = platform === 'win32' ? 'codex.exe' : 'codex';
+  for (const directory of String(env.PATH ?? env.Path ?? '').split(platform === 'win32' ? ';' : ':')) {
+    if (!directory || !path.isAbsolute(directory.replace(/^"|"$/g, ''))) continue;
+    const file = path.join(directory.replace(/^"|"$/g, ''), executableName);
+    if (await isFile(file)) return file;
+  }
   const bundled = options.bundledExecutable ?? bundledExecutable(platform, arch);
   if (await isFile(bundled)) return bundled;
+  if (options.requireExisting) return '';
   return platform === "win32" ? "codex.exe" : "codex";
 }

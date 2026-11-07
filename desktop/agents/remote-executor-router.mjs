@@ -14,12 +14,14 @@ function sessionProvider(sessionId) {
 }
 
 export class RemoteExecutorRouter {
-  constructor({ codex, claude, getDefaultProvider } = {}) {
+  constructor({ codex, claude, getDefaultProvider, isConnected = () => true } = {}) {
     this.executors = { codex, claude };
     this.getDefaultProvider = getDefaultProvider;
+    this.isConnected = isConnected;
   }
 
   #executor(id) {
+    if (!this.isConnected(id)) throw new Error(`请先在“智能体与 AI”中连接 ${id === 'claude' ? 'Claude Code' : 'Codex'}。`);
     const executor = this.executors[id];
     if (!executor) throw new Error(`远程执行来源未配置：${id}`);
     return executor;

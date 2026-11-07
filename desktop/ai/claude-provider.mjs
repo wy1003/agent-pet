@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises";
-import { aiError } from "./errors.mjs";
+import { aiError, publicAiError } from "./errors.mjs";
 
 export class ClaudeTextProvider {
   constructor({ workingDirectory, query, executablePath = "" }) {
@@ -32,10 +32,12 @@ export class ClaudeTextProvider {
       signal?.throwIfAborted();
       const [available, account] = await Promise.all([inspection.supportedModels(), inspection.accountInfo()]);
       signal?.throwIfAborted();
-      if (!account?.tokenSource && !account?.apiKeySource && !account?.email) {
+      const hasSource = value => typeof value === 'string' && value.trim() && !/^(none|null|undefined|unknown)$/i.test(value.trim());
+      if (!hasSource(account?.tokenSource) && !hasSource(account?.apiKeySource)
+        && !(account?.email && account.tokenSource === undefined && account.apiKeySource === undefined)) {
         throw aiError("authentication", "Claude Code 尚未提供登录信息，请先检查 Claude Code 登录状态。");
       }
-      if (!Array.isArray(available)) throw aiError("catalog_invalid", "Claude Code 未返回有效模型列表，请检查运行程序版本。");
+      if (!Array.isArray(available) || !available.some(item => item.value)) throw aiError("catalog_invalid", "Claude Code 未返回有效模型列表，请检查运行程序版本。");
       models = [{ id: "default", name: "跟随 Claude Code 默认模型", efforts: [] }];
       for (const entry of available) {
         if (!entry.value || models.some((item) => item.id === entry.value)) continue;
@@ -73,6 +75,8 @@ export class ClaudeTextProvider {
             }
             if (event.type !== "result") continue;
             if (event.subtype !== "success" || event.is_error) {
+              const failure = publicAiError(new Error([event.error, event.result, ...(Array.isArray(event.errors) ? event.errors : [])].filter(value => typeof value === 'string').join(' ')));
+              if (['authentication', 'rate_limit'].includes(failure.code)) throw failure;
               throw aiError("invalid_response", "Claude 文本生成未成功，请检查连接或额度后重试。");
             }
             if (event.structured_output !== undefined) return { text: JSON.stringify(event.structured_output) };

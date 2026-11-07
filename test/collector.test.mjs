@@ -369,7 +369,7 @@ test("HTTP server provides the local task list UI", async (t) => {
   assert.match(settingsPage, /data-page="general"/);
   assert.match(settingsPage, /data-settings-page="general"/);
   assert.match(settingsPage, /id="agent-provider-list"/);
-  assert.match(settingsPage, /任务来源/);
+  assert.match(settingsPage, /桌宠 AI/);
   assert.match(settingsPage, /id="notification-history-path"/);
   assert.match(settingsPage, /id="app-version"/);
   assert.match(settingsPage, /id="app-update-status"/);

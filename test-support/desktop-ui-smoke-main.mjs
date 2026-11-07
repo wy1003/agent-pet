@@ -16,6 +16,7 @@ import { CodexUsageProvider } from "../desktop/usage/codex-usage-provider.mjs";
 import { PhrasePoolGenerator } from "../desktop/phrase-generator.mjs";
 import { ClaudeTranscriptDiscovery } from "../src/claude-discovery.mjs";
 import { NotebookCodexConnection } from "../desktop/notebook/mcp/codex-connection.mjs";
+import { AgentRuntimeInstallation } from "../desktop/agents/runtime-installation.mjs";
 
 // Test driver only: observe native windows while exercising the real entrypoint,
 // renderer, preload, Facades and IPC. Never use these hooks in production.
@@ -114,12 +115,42 @@ for (const method of ["status", "connect"]) {
 }
 
 let allowConfirmation = false, generationAttempts = 0;
+const runtimePreparations = [];
+// Exercise real connection IPC and consumers, with component transfer simulated.
+// Archive integrity, extraction and real SDK imports are verified separately.
+AgentRuntimeInstallation.prototype.inspect = async function (id) { return this.ready.has(id) ? 'ready' : 'missing'; };
+AgentRuntimeInstallation.prototype.prepare = async function (id, options) {
+  runtimePreparations.push({ id, allowDownload: options.allowDownload });
+  options.onProgress({ phase: 'downloading', received: 1024, total: 2048 });
+  await new Promise(resolve => setTimeout(resolve, 80));
+  options.signal.throwIfAborted();
+  const value = { executable: path.join(root, `fixture-${id}-never-executed.exe`),
+    module: { query() { throw new Error('No real model calls'); }, Codex: class {} } };
+  this.ready.set(id, value);
+  return value;
+};
 app.setLoginItemSettings = () => { checks.push("login-item changes intercepted"); };
 app.getLoginItemSettings = () => ({ openAtLogin: false, wasOpenedAtLogin: false });
 AppUpdater.prototype.start = function () {};
 // Startup phrase warmup is outside the UI/discovery contract and can call a model.
 PhrasePoolGenerator.prototype.schedule = function () {};
-AiTextService.prototype.check = async function () { return this.snapshot(); };
+let aiCheckPreview = null;
+let aiCatalogChecks = 0;
+let claudeUnavailable = true;
+AiTextService.prototype.inspectConnection = async function (id) {
+  aiCatalogChecks++;
+  if (['codex', 'claude'].includes(id)) {
+    await new Promise(resolve => setTimeout(resolve, 180));
+    if (id === 'claude' && claudeUnavailable) throw new Error('401 Unauthorized fixture');
+    return { models: [{ id: 'fixture-model' }], defaultModelId: 'fixture-model' };
+  }
+  return structuredClone(aiCheckPreview);
+};
+AiTextService.prototype.check = async function () {
+  aiCatalogChecks++;
+  if (aiCheckPreview) { this.state = structuredClone(aiCheckPreview); this.onStatus(this.snapshot()); }
+  return this.snapshot();
+};
 AiTextService.prototype.generateJson = async function () { generationAttempts++; throw new Error("Real model calls are disabled in UI smoke"); };
 CodexUsageProvider.prototype.getUsage = async () => ({ providerId: "codex", viewType: "unavailable", status: "unavailable", windows: [], message: "隔离测试：未查询账户" });
 dialog.showMessageBox = async options => {
@@ -171,7 +202,7 @@ const until = async (read, accept, label, timeout = 15000) => {
   throw new Error(`Timed out: ${label}`);
 };
 const evaluate = (window, code) => window.webContents.executeJavaScript(code, true);
-const control = (window, key, value) => evaluate(window, `(() => { const e=document.querySelector('[data-claude-setting="${key}"]'); if(!e)throw Error('missing control'); if(e.type==='checkbox')e.checked=${JSON.stringify(value)};else e.value=${JSON.stringify(value)}; e.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+const control = (window, key, value) => evaluate(window, `(() => { const e=document.querySelector('[data-${key === 'defaultProviderId' ? 'agent' : 'claude'}-setting="${key}"]'); if(!e)throw Error('missing control'); if(e.type==='checkbox')e.checked=${JSON.stringify(value)};else e.value=${JSON.stringify(value)}; e.dispatchEvent(new Event('change',{bubbles:true})); })()`);
 const state = window => evaluate(window, "window.companion.getSettings()");
 const click = (window, selector) => evaluate(window, `document.querySelector(${JSON.stringify(selector)}).click()`);
 async function runHook(hook, event) {
@@ -212,6 +243,114 @@ try {
   settings.setTitle("Agent Pet · 隔离界面测试");
   await click(settings, '[data-page="ai"]');
   const before = await state(settings);
+  assert.equal(await evaluate(settings, 'document.querySelector("#ai [data-claude-setting]")'), null, 'overview contains no provider-specific controls');
+  await click(settings, '[data-provider-settings="codex"]');
+  assert.equal(await evaluate(settings, 'document.querySelector("#agent-detail-title").textContent'), 'Codex');
+  assert.equal(await evaluate(settings, 'document.querySelector("[data-agent-options=claude]").hidden'), true);
+  assert.equal(await evaluate(settings, 'document.querySelector("[data-page=ai]").getAttribute("aria-current")'), 'page');
+  await fsp.writeFile(path.join(output, 'codex-settings-light.png'), (await settings.webContents.capturePage()).toPNG());
+  await click(settings, '#agent-detail-back');
+  assert.equal(await evaluate(settings, 'document.activeElement.dataset.providerSettings'), 'codex');
+  await click(settings, '[data-provider-settings="claude"]');
+  assert.equal(await evaluate(settings, 'document.querySelector("#agent-detail-title").textContent'), 'Claude Code');
+  assert.equal(await evaluate(settings, 'document.querySelector("#ai").hidden'), true);
+  assert.equal(await evaluate(settings, 'document.querySelector("[data-agent-options=codex]").hidden'), true);
+  assert.equal(await evaluate(settings, 'document.querySelector("[data-claude-setting=autoLifecycleHooks]").getClientRects().length > 0'), true);
+  await until(() => evaluate(settings, 'document.querySelector("#claude-lifecycle-state").textContent'), text => text !== '待检查', 'separate Claude status rows loaded');
+  await evaluate(settings, 'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  await fsp.writeFile(path.join(output, 'claude-settings-light.png'), (await settings.webContents.capturePage()).toPNG());
+  await click(settings, '#claude-runtime-settings > summary');
+  await click(settings, '.claude-advanced > summary');
+  assert.equal(await evaluate(settings, 'document.querySelector("#claude-runtime-settings").open && document.querySelector(".claude-advanced").open'), true);
+  assert.equal(await evaluate(settings, '!!document.querySelector("#agent-detail .setting-list .setting-list")'), false, 'no nested cards in detail settings');
+  await evaluate(settings, 'document.querySelector("#claude-runtime-settings").scrollIntoView({block:"start",behavior:"instant"}); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  await fsp.writeFile(path.join(output, 'claude-runtime-light.png'), (await settings.webContents.capturePage()).toPNG());
+  const detailSize = settings.getContentSize(), detailMinimum = settings.getMinimumSize();
+  settings.setMinimumSize(500, 500);
+  settings.setContentSize(540, 760);
+  await click(settings, '#claude-preview');
+  await until(() => evaluate(settings, 'document.querySelector("#claude-preview-output").textContent'), Boolean, 'preview content available');
+  await evaluate(settings, 'document.querySelector(".claude-advanced").scrollIntoView({block:"start",behavior:"instant"}); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  const detailLayout = await evaluate(settings, `(() => {
+    const section = document.querySelector('#agent-detail').getBoundingClientRect();
+    const cards = [...document.querySelectorAll('#agent-detail .setting-list')].filter(e => e.getClientRects().length);
+    return { viewport: innerWidth, width: document.documentElement.scrollWidth, aligned: cards.every(e => Math.abs(e.getBoundingClientRect().left-section.left)<1 && Math.abs(e.getBoundingClientRect().right-section.right)<1),
+      controlsFit: [...document.querySelectorAll('#agent-detail input, #agent-detail button, #claude-preview-output')].filter(e => e.getClientRects().length).every(e => e.getBoundingClientRect().right <= section.right+1),
+      previewBounded: document.querySelector('#claude-preview-output').clientHeight <= 280 };
+  })()`);
+  assert.equal(detailLayout.width <= detailLayout.viewport, true, 'detail page has no horizontal overflow');
+  assert.equal(detailLayout.aligned && detailLayout.controlsFit && detailLayout.previewBounded, true, JSON.stringify(detailLayout));
+  await fsp.writeFile(path.join(output, 'claude-enhancements-narrow.png'), (await settings.webContents.capturePage()).toPNG());
+  settings.setContentSize(...detailSize);
+  settings.setMinimumSize(...detailMinimum);
+  await evaluate(settings, 'document.querySelector("#claude-preview-output").hidden = true; document.querySelector("#claude-runtime-settings").open = false; document.querySelector(".claude-advanced").open = false; window.scrollTo({top:0,behavior:"instant"});');
+  checks.push('Claude detail uses aligned cards, separate readable statuses, independent disclosures and bounded preview; narrow layout keeps controls inside cards without changing preferences');
+  await click(settings, '[data-page="general"]');
+  assert.equal(await evaluate(settings, 'document.querySelector("#agent-detail").hidden'), true);
+  await click(settings, '[data-page="ai"]');
+  assert.equal(await evaluate(settings, 'document.querySelector("#agent-detail").hidden'), true);
+  assert.deepEqual((await state(settings)).preferences, before.preferences, 'navigation must not change connections or preferences');
+  checks.push('provider settings are separate child pages; overview excludes Claude controls; Codex has no Claude controls; back restores focus and sidebar navigation exits details without changing preferences');
+  assert.deepEqual(runtimePreparations, [], 'startup must not prepare or download optional components');
+  assert.deepEqual(before.preferences.agent.connections, { codex: false, claude: false });
+  assert.deepEqual(readClaude(), initialClaude, 'disconnected startup must not install Hooks');
+  assert.deepEqual((await evaluate(settings, 'window.companion.getAllUsage()')).providers, []);
+  assert.equal(await evaluate(settings, 'document.querySelector("[data-provider-id=claude] .agent-connection-action").textContent'), '下载');
+  await fsp.writeFile(path.join(output, 'connections-disconnected.png'), (await settings.webContents.capturePage()).toPNG());
+  await evaluate(settings, "document.querySelector('#ai-settings').scrollIntoView({block:'center',behavior:'instant'}); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  await fsp.writeFile(path.join(output, 'text-generation-light.png'), (await settings.webContents.capturePage()).toPNG());
+  await evaluate(settings, "window.scrollTo({top:0,behavior:'instant'})");
+  await click(settings, '[data-provider-id="codex"] .agent-connection-action');
+  await click(settings, '[data-provider-id="claude"] .agent-connection-action');
+  await until(() => state(settings), value => value.agentProviders.providers.every(provider => provider.state === 'connected'), 'independent connections complete');
+  assert.equal(runtimePreparations.length, 2);
+  await until(() => state(settings), value => value.agentProviders.providers.find(p => p.id === 'claude').availability?.state === 'unavailable', 'connected Claude without login is unavailable');
+  assert.equal(await evaluate(settings, 'document.querySelector("[data-provider-id=claude] .agent-availability").textContent'), '不可用');
+  assert.equal(await evaluate(settings, 'document.querySelector("[data-provider-id=claude] .agent-provider-state").textContent'), '已连接');
+  await until(() => evaluate(settings, 'document.querySelector("#ai-connection").value'), value => value === 'codex', 'first available service becomes the visible default');
+  assert.equal(await evaluate(settings, 'document.querySelector("#ai-connection option[value=claude]")'), null, 'connected but unavailable Claude cannot be selected');
+  const rejectedSelection = await evaluate(settings, 'window.companion.updateAiSettings({preferences:{connectionId:"claude"}}).then(() => false, () => true)');
+  assert.equal(rejectedSelection, true, 'IPC independently rejects unavailable services');
+  await fsp.writeFile(path.join(output, 'agent-availability-light.png'), (await settings.webContents.capturePage()).toPNG());
+  await evaluate(settings, "window.companion.updateSettings({appearance:{theme:'dark'}})");
+  await until(() => evaluate(settings, "getComputedStyle(document.documentElement).getPropertyValue('--card').trim()"), color => color === '#272d30', 'availability dark palette');
+  await evaluate(settings, 'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  await fsp.writeFile(path.join(output, 'agent-availability-dark.png'), (await settings.webContents.capturePage()).toPNG());
+  await evaluate(settings, "window.companion.updateSettings({appearance:{theme:'light'}})");
+  claudeUnavailable = false;
+  await click(settings, '[data-provider-id="claude"] .agent-availability');
+  await until(() => state(settings), value => value.agentProviders.providers.every(p => p.availability?.state === 'available'), 'availability retry');
+  await until(() => evaluate(settings, '!!document.querySelector("#ai-connection option[value=claude]")'), Boolean, 'available Claude appears in the service picker');
+  await evaluate(settings, '(() => { const picker = document.querySelector("#ai-connection"); picker.value = "claude"; picker.dispatchEvent(new Event("change", {bubbles:true})); })()');
+  await until(() => state(settings), value => value.preferences.ai.connectionId === 'claude', 'select available Claude');
+  claudeUnavailable = true;
+  await click(settings, '[data-provider-id="claude"] .agent-availability');
+  await until(() => evaluate(settings, 'document.querySelector("#ai-connection option[value=claude]")?.textContent'), value => value?.includes('检查中'), 'selected service remains pending during recheck');
+  await until(() => evaluate(settings, 'document.querySelector("#ai-connection option[value=claude]")?.textContent'), value => value?.includes('不可用'), 'failed selected service is marked unavailable');
+  assert.equal(await evaluate(settings, 'document.querySelector("#ai-connection option[value=claude]").disabled'), true);
+  assert.equal(await evaluate(settings, 'document.querySelector("#ai-connection").value'), 'claude', 'never silently switch the selected service');
+  assert.equal(await evaluate(settings, 'document.querySelector("#ai-model-mode-row").hidden'), true);
+  await evaluate(settings, "document.querySelector('#ai-settings').scrollIntoView({block:'center',behavior:'instant'}); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  await fsp.writeFile(path.join(output, 'ai-service-unavailable-light.png'), (await settings.webContents.capturePage()).toPNG());
+  await evaluate(settings, '(() => { const picker = document.querySelector("#ai-connection"); picker.value = "codex"; picker.dispatchEvent(new Event("change", {bubbles:true})); })()');
+  await until(() => state(settings), value => value.preferences.ai.connectionId === 'codex', 'switch to an available service');
+  claudeUnavailable = false;
+  await click(settings, '[data-provider-id="claude"] .agent-availability');
+  await until(() => state(settings), value => value.agentProviders.providers.every(p => p.availability?.state === 'available'), 'availability restored after picker verification');
+  await evaluate(settings, "window.scrollTo({top:0,behavior:'instant'})");
+  checks.push('AI picker only permits available connections; checking differs from unavailable, IPC rejects invalid selections, and failure preserves the selected service until explicit replacement');
+  checks.push('download action before components, independent connected/unavailable labels, and metadata-only availability retry');
+
+  checks.push('no startup component download/Hook/quota; independent connect buttons prepare only selected providers; both become connected');
+  aiCheckPreview = { connectionId: 'codex', status: 'ready', compatibility: 'catalog', name: 'Codex',
+    modelId: 'gpt-6-astra', modelProvider: 'openai', runtimeVersion: '0.166.0-alpha.5.1',
+    models: [{ id: 'gpt-6-astra', name: 'GPT-6-Astra' }],
+    message: '连接和模型检查通过，当前模型：gpt-6-astra。实际生成时仍会检查服务端返回结果。' };
+  await click(settings, '#ai-check');
+  await until(() => evaluate(settings, 'document.querySelector("#ai-status-indicator").dataset.state'), value => value === 'ready', 'AI status preview');
+  await evaluate(settings, "document.querySelector('#ai-settings').scrollIntoView({block:'center',behavior:'instant'}); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  await fsp.writeFile(path.join(output, 'text-generation-ready-light.png'), (await settings.webContents.capturePage()).toPNG());
+  await evaluate(settings, "window.scrollTo({top:0,behavior:'instant'})");
   const sourceCards = await evaluate(settings, `Array.from(document.querySelectorAll('.agent-provider-card')).map(card => ({
     text: card.textContent, selectable: card.matches('button,[role="button"],[aria-pressed]')
   }))`);
@@ -222,9 +361,17 @@ try {
   assert.equal(await evaluate(settings, '!!document.querySelector(\'[data-claude-setting="usageProviderId"]\')'), false);
   const allUsage = await evaluate(settings, "window.companion.getAllUsage()");
   assert.deepEqual(allUsage.providers.map(provider => provider.providerId), ["codex", "claude"]);
-  assert.equal((await state(settings)).preferences.ai.connectionId, before.preferences.ai.connectionId);
+  assert.equal((await state(settings)).preferences.ai.connectionId, "codex");
+  assert.equal(await evaluate(settings, 'document.querySelector("#ai [data-agent-setting=defaultProviderId]")'), null, 'remote new-task routing is not a global AI option');
+  await click(settings, '[data-page="mobile"]');
+  assert.equal(await evaluate(settings, 'document.querySelector("#remote-control [data-agent-setting=defaultProviderId]").getClientRects().length > 0'), true);
   await control(settings, "defaultProviderId", "claude");
   await until(() => state(settings), value => value.preferences.remoteControl.defaultProviderId === "claude", "default executor independent of collection");
+  await evaluate(settings, "document.querySelector('#remote-control').scrollIntoView({block:'center',behavior:'instant'}); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  await fsp.writeFile(path.join(output, 'remote-new-task-light.png'), (await settings.webContents.capturePage()).toPNG());
+  await click(settings, '#remote-agent-connections');
+  assert.equal(await evaluate(settings, 'document.querySelector("#ai").hidden'), false);
+  assert.equal((await state(settings)).preferences.ai.connectionId, "codex");
   assert.equal(before.preferences.claude.nodePath, "", "No manually configured Node executable");
   assert.equal(before.preferences.claude.autoLifecycleHooks, true);
   assert.equal(await evaluate(settings, 'document.querySelector(\'[data-claude-setting="autoLifecycleHooks"]\').checked'), true);
@@ -232,7 +379,7 @@ try {
   assertLifecycle(automaticConfig);
   assert.deepEqual(automaticConfig.statusLine, initialClaude.statusLine);
   assert.deepEqual(readMcp(), initialMcp);
-  checks.push("startup installs five automatic Hooks with blank Node preference; permissions/model/statusLine/MCP and user Hooks unchanged");
+  checks.push("connecting Claude installs five automatic Hooks with blank Node preference; permissions/model/statusLine/MCP and user Hooks unchanged");
 
   const timestamp = new Date().toISOString();
   const transcript = path.join(process.env.CLAUDE_CONFIG_DIR, "projects", "ui-project", "auto-ui.jsonl");
@@ -278,6 +425,7 @@ try {
     && value.tasks.some(task => task.question === "Codex 同时自动发现" && task.status === "completed"), "both automatically collected sources");
   assert.deepEqual(readClaude(), automaticConfig);
   checks.push("Codex and Claude collect simultaneously with automatic lifecycle Hooks");
+  await click(settings, '[data-provider-settings="claude"]');
   await evaluate(settings, "document.querySelector('.claude-advanced').open = true");
   await control(settings, "enableStatusline", true);
   await until(() => state(settings), value => value.preferences.claude.enableStatusline === true, "optional statusline preference saved without changing config");
@@ -302,12 +450,14 @@ try {
   checks.push("optional enhancement cancellation preserves config; installation adds MCP and three optional event Hooks without duplicating five automatic Hooks");
 
   await click(settings, "#claude-refresh");
-  await until(() => evaluate(settings, "document.querySelector('#claude-status').textContent"), text => text.includes("已安装"), "integration status");
+  await until(() => evaluate(settings, "document.querySelector('#claude-integration-state').textContent"), text => text.includes("已安装"), "integration status");
   await fsp.writeFile(path.join(output, "settings-light.png"), (await settings.webContents.capturePage()).toPNG());
-  await evaluate(settings, "document.querySelector('#claude-status').scrollIntoView({block:'center'})");
+  await evaluate(settings, "document.querySelector('.claude-advanced').scrollIntoView({block:'center',behavior:'instant'}); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
   await fsp.writeFile(path.join(output, "settings-detail-light.png"), (await settings.webContents.capturePage()).toPNG());
   await evaluate(settings, "window.companion.updateSettings({appearance:{theme:'dark'}})");
   await until(() => evaluate(settings, "matchMedia('(prefers-color-scheme: dark)').matches"), Boolean, "dark theme");
+  await until(() => evaluate(settings, "getComputedStyle(document.documentElement).getPropertyValue('--card').trim()"), color => color === '#272d30', 'dark CSS palette applied');
+  await evaluate(settings, 'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
   await until(() => evaluate(settings, `(() => {
     const card = document.querySelector('.agent-provider-card');
     const probe = document.createElement('div');
@@ -315,8 +465,18 @@ try {
     return { actual: getComputedStyle(card).backgroundColor, expected: probe.style.backgroundColor };
   })()`), colors => colors.actual === colors.expected, "provider card theme transition");
   await fsp.writeFile(path.join(output, "settings-dark.png"), (await settings.webContents.capturePage()).toPNG());
-  await evaluate(settings, "document.querySelector('.claude-advanced').open = false; document.querySelector('.agent-provider-card').scrollIntoView({block:'start'})");
+  await evaluate(settings, 'document.querySelector(".claude-advanced").open = false; window.scrollTo({top:0,behavior:"instant"}); new Promise(resolve => setTimeout(resolve, 200))');
+  await fsp.writeFile(path.join(output, 'claude-settings-dark.png'), (await settings.webContents.capturePage()).toPNG());
+  await click(settings, '#agent-detail-back');
   await fsp.writeFile(path.join(output, "sources-dark.png"), (await settings.webContents.capturePage()).toPNG());
+  await click(settings, '#ai-check');
+  await until(() => evaluate(settings, 'document.querySelector("#ai-status-indicator").dataset.state'), value => value === 'ready', 'dark AI status preview');
+  await evaluate(settings, "document.querySelector('#ai-settings').scrollIntoView({block:'center',behavior:'instant'}); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  await fsp.writeFile(path.join(output, 'text-generation-dark.png'), (await settings.webContents.capturePage()).toPNG());
+  await evaluate(settings, "document.querySelector('#ai-connection-details').open = true; document.querySelector('#ai-settings').scrollIntoView({block:'end',behavior:'instant'}); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  await fsp.writeFile(path.join(output, 'text-generation-details-dark.png'), (await settings.webContents.capturePage()).toPNG());
+  await evaluate(settings, "document.querySelector('#ai-connection-details').open = false");
+  await evaluate(settings, "window.scrollTo({top:0,behavior:'instant'})");
   await evaluate(settings, "window.companion.updateSettings({appearance:{showUsageCard:true}})");
   await evaluate(pet, "window.companion.togglePanel()");
   const usageWindow = await until(async () => {
@@ -346,6 +506,7 @@ try {
   assert.deepEqual(readClaude(), automaticConfig);
   assert.deepEqual(readMcp(), initialMcp);
   checks.push("removing optional enhancement retains automatic Hooks and restores original statusLine/MCP");
+  await click(settings, '[data-provider-settings="claude"]');
   await control(settings, "autoLifecycleHooks", false);
   await until(() => state(settings), value => value.preferences.claude.autoLifecycleHooks === false, "automatic Hook preference disabled");
   await until(readClaude, value => Object.values(lifecycleHooks(value)).every(hooks => !hooks.length), "automatic Hooks removed");
@@ -448,7 +609,45 @@ try {
   assert.match(await evaluate(settings, "document.querySelector('#notebook-claude-mcp-status').textContent"), /配置已完成/);
   checks.push("Notebook settings: matching Codex/Claude button styles and direct no-dialog flow, canonical agent-pet-notebook name, changed/repeat feedback, MCP-only writes, duplicate no-op, source coexistence, full integration removal preserves notebook, legacy owned name migrates only on click, missing managed MCP restores only on click; Codex config RPC fixture only");
   assert.equal(generationAttempts, 0);
+  await click(settings, '[data-page="ai"]');
+  await click(settings, '[data-provider-id="claude"] .agent-connection-action');
+  await until(() => state(settings), value => !value.preferences.agent.connections.claude, 'disconnect Claude persists');
+  assert.equal((await state(settings)).preferences.agent.connections.codex, true);
+  assert.deepEqual((await evaluate(settings, 'window.companion.getAllUsage()')).providers.map(value => value.providerId), ['codex']);
+  assert.ok(Object.values(lifecycleHooks(readClaude())).every(hooks => !hooks.length));
+  assert.ok((await (await globalThis.fetch(`${base}/api/v1/tasks`)).json()).tasks.every(task => !task.sessionId.startsWith('claude:')));
+  await fsp.writeFile(path.join(output, 'connections-one-connected.png'), (await settings.webContents.capturePage()).toPNG());
+  checks.push('disconnecting Claude leaves Codex connected, removes only automatic Hooks, hides Claude quota and tasks, preserves the independent default');
   checks.push("GUI toggle removes only owned lifecycle Hooks, persists disabled/enabled preference, restores Hooks with Node still blank; zero model generation attempts");
+  const checksBeforeKey = aiCatalogChecks;
+  aiCheckPreview = { connectionId: 'deepseek', name: 'DeepSeek', modelProvider: 'deepseek', status: 'error', code: 'model_required',
+    models: [{ id: 'fixture-chat', name: 'Fixture Chat' }, { id: 'fixture-reasoner', name: 'Fixture Reasoner' }],
+    message: '请选择模型。' };
+  assert.equal(await evaluate(settings, 'document.querySelector("#ai-connection option[value=agent]")'), null);
+  assert.equal(await evaluate(settings, 'document.querySelector("#ai-connection option[value=deepseek]")'), null);
+  await click(settings, '#ai-add');
+  await evaluate(settings, "document.querySelector('#ai-add-type').value='deepseek'; document.querySelector('#ai-add-type').dispatchEvent(new Event('change',{bubbles:true}))");
+  assert.equal(aiCatalogChecks, checksBeforeKey, 'no catalog check before a key is supplied');
+  assert.equal(await evaluate(settings, 'document.querySelector("#ai-add-fetch").disabled'), true);
+  await evaluate(settings, "document.querySelector('#ai-add-panel').scrollIntoView({block:'center',behavior:'instant'}); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  await fsp.writeFile(path.join(output, 'add-service-light.png'), (await settings.webContents.capturePage()).toPNG());
+  await evaluate(settings, "window.companion.updateSettings({appearance:{theme:'dark'}})");
+  await until(() => evaluate(settings, "getComputedStyle(document.documentElement).getPropertyValue('--card').trim()"), color => color === '#272d30', 'add service dark palette');
+  await evaluate(settings, 'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  await fsp.writeFile(path.join(output, 'add-service-dark.png'), (await settings.webContents.capturePage()).toPNG());
+  await evaluate(settings, "document.querySelector('#ai-add-key').value='fixture-only-never-sent'; document.querySelector('#ai-add-key').dispatchEvent(new Event('input',{bubbles:true}))");
+  await click(settings, '#ai-add-fetch');
+  await until(() => evaluate(settings, 'document.querySelector("#ai-add-model-row").hidden'), hidden => !hidden, 'draft model list');
+  assert.equal((await state(settings)).preferences.ai.connectionId, 'codex', 'draft does not switch the active service');
+  await evaluate(settings, "document.querySelector('#ai-add-model').value='fixture-chat'; document.querySelector('#ai-add-model').dispatchEvent(new Event('change',{bubbles:true}))");
+  aiCheckPreview = { ...aiCheckPreview, status: 'ready', code: undefined, modelId: 'fixture-chat', message: '连接与模型检查通过。' };
+  await click(settings, '#ai-add-confirm');
+  await until(() => evaluate(settings, 'document.querySelector("#ai-add-panel").hidden && document.querySelector("#ai-connection").value === "deepseek"'), Boolean, 'configured service selected');
+  assert.equal(await evaluate(settings, 'document.querySelector("#ai-add-key").value'), '');
+  await until(() => evaluate(settings, 'document.querySelector("#ai-status-indicator").dataset.state'), value => value === 'ready', 'new service checked');
+  await evaluate(settings, "document.querySelector('#ai-settings').scrollIntoView({block:'end',behavior:'instant'}); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  await fsp.writeFile(path.join(output, 'added-service-dark.png'), (await settings.webContents.capturePage()).toPNG());
+  checks.push('explicit configured-service picker, empty add state, key-first draft catalog with no active-service changes, and add-and-use through real preload/IPC');
   await fsp.writeFile(path.join(output, "report.json"), JSON.stringify({ ok: true, checks, dialogs, rendererErrors, blockedNetwork: [...new Set(blockedNetwork)],
     boundaries: ["real source Electron UI", "temporary userData and Claude config", "confirmation dialogs simulated", "no real model or Weixin", "not an installer/real-client acceptance"] }, null, 2));
 } catch (error) {

@@ -87,6 +87,7 @@ contextBridge.exposeInMainWorld("companion", {
   getAiSettings: () => ipcRenderer.invoke("ai:settings"),
   updateAiSettings: (command) => ipcRenderer.invoke("ai:update", command),
   checkAiConnection: () => ipcRenderer.invoke("ai:check"),
+  configureAiConnection: (command) => ipcRenderer.invoke("ai:configure", command),
   onAiStatus: (callback) => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on("ai:status", listener);
@@ -98,6 +99,15 @@ contextBridge.exposeInMainWorld("companion", {
   removeClaudeIntegration: () => ipcRenderer.invoke("claude:remove"),
   updateClaudeSettings: (value) => ipcRenderer.invoke("claude:update", value),
   selectAgentProvider: (id) => ipcRenderer.invoke("agent-providers:select", id),
+  connectAgent: id => ipcRenderer.invoke('agent-providers:connect', id),
+  setDefaultAgent: id => ipcRenderer.invoke('agent-providers:set-default', id),
+  disconnectAgent: id => ipcRenderer.invoke('agent-providers:disconnect', id),
+  verifyAgent: id => ipcRenderer.invoke('agent-providers:verify', id),
+  onAgentConnectionsChanged: callback => {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on('agent-providers:changed', listener);
+    return () => ipcRenderer.removeListener('agent-providers:changed', listener);
+  },
   updateSettings: (patch) => ipcRenderer.invoke("settings:update", patch),
   resetSettings: () => ipcRenderer.invoke("settings:reset"),
   getAppUpdateStatus: () => ipcRenderer.invoke("app:update-status"),

@@ -16,6 +16,6 @@ export function publicAiError(error) {
   if (/401|unauthorized|authentication|login|sign.in/i.test(message)) {
     return aiError("authentication", "AI 连接认证失败，请检查登录状态或 API 密钥。");
   }
-  if (/429|rate.limit|quota/i.test(message)) return aiError("rate_limit", "AI 服务暂时限流或额度不足，请稍后重试。");
+  if (/429|rate.limit|quota|insufficient.*credit|credit.*balance|billing/i.test(message)) return aiError("rate_limit", "AI 服务暂时限流或额度不足，请稍后重试。");
   return aiError("connection_failed", "AI 连接或生成失败，请检查服务地址、网络和连接配置后重试。");
 }

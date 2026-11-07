@@ -34,6 +34,26 @@ export class AiTextService {
 
   snapshot() { return structuredClone(this.state); }
 
+  // Catalog-only setup does not change the selected service or its live status.
+  async inspectConnection(id, config, credential, { signal } = {}) {
+    if (this.stopped) throw aiError("cancelled", "AI 服务已停止。");
+    const controller = new AbortController();
+    this.operations.add(controller);
+    let connection;
+    try {
+      const provider = this.providers.get(id);
+      if (!provider) throw aiError("unsupported_connection", "暂不支持这个 AI 服务。");
+      const inspectionSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]);
+      inspectionSignal.throwIfAborted();
+      connection = await provider.open(config, { credential, signal: inspectionSignal });
+      inspectionSignal.throwIfAborted();
+      return structuredClone(connection.catalog);
+    } catch (error) { throw publicAiError(error); }
+    finally {
+      try { await connection?.close?.(); } finally { this.operations.delete(controller); }
+    }
+  }
+
   configurationChanged() {
     this.configurationRevision += 1;
     this.checking = null;
@@ -84,6 +104,7 @@ export class AiTextService {
     publish({ status: "checking", message: "正在获取模型列表并检查连接…" });
     try {
       signal.throwIfAborted();
+      if (!connectionId) throw aiError("configuration", "请先添加 AI 服务。");
       const provider = this.providers.get(connectionId);
       if (!provider) throw aiError("unsupported_connection", "当前智能体连接尚未提供 AI 文本接口，请选择已支持的 AI 连接。");
       connection = await provider.open(ai.connections[connectionId] || {}, { signal });

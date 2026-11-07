@@ -7,6 +7,7 @@ import {
   Menu,
   nativeImage,
   nativeTheme,
+  net,
   Notification,
   protocol,
   safeStorage,
@@ -25,10 +26,9 @@ import { createDesktopCollectors, createDesktopProviders, createDesktopExecutor,
   claudeSessionActivity, agentSelectionPatch } from "./agents/desktop-runtime.mjs";
 import { installClaudeSettingsIpc, executableResourcePath } from "./agents/claude-settings.mjs";
 import { createClaudeLifecycleController } from "./agents/claude-lifecycle.mjs";
-import { resolveNodeExecutable, resolveClaudeConfigDirectory } from "./claude/runtime.mjs";
-import {
-  isCompatibleCollectorHealth,
-} from "../src/collector-service-identity.mjs";
+import { AgentRuntimeInstallation } from "./agents/runtime-installation.mjs";
+import { AgentConnectionController, installAgentConnectionIpc } from "./agents/connection-controller.mjs";
+import { resolveNodeExecutable, resolveClaudeConfigDirectory, getClaudeRuntimeStatus } from "./claude/runtime.mjs";
 import {
   copywriterWorkingDirectory,
   defaultIgnoredProjectPaths,
@@ -175,6 +175,10 @@ let speechIdleTimer = null;
 let tray = null;
 let serviceUrl = DEFAULT_SERVICE_URL;
 let ownedCollector = null;
+let availableCollectors = null;
+let agentConnections = null;
+let agentRuntimes = null;
+const connectedAgentIds = new Set();
 let desktopProviders = null;
 let ownedServer = null;
 let collectorReadyPromise = Promise.resolve();
@@ -383,7 +387,7 @@ function settingsState() {
   return {
     preferences: preferenceStore.get(),
     aiStatus: aiTextService?.snapshot(),
-    agentProviders: agentProviderRegistry?.snapshot() || {
+    agentProviders: agentProviderRegistry?.snapshot(agentConnections?.snapshot()) || {
       activeProviderId: "",
       providers: [],
     },
@@ -403,7 +407,7 @@ function activateAgentProvider(preferences = preferenceStore?.get()) {
   } catch {
     provider = agentProviderRegistry.setActiveProvider("codex");
   }
-  // Resolve old single-source API preferences only; collection and desktop usage stay dual-source.
+  // The default provider never changes which independent connections are enabled.
   usageProviderRegistry?.setActiveProvider(preferences.agent.usageProviderId === "active"
     ? provider.usageProviderId : preferences.agent.usageProviderId);
   sendPetState();
@@ -853,18 +857,14 @@ async function collectorServiceHealth(baseUrl) {
 
 async function ensureCollectorService() {
   const existingHealth = await collectorServiceHealth(DEFAULT_SERVICE_URL);
-  if (isCompatibleCollectorHealth(existingHealth, DUAL_COLLECTOR_IDENTITY)) {
-    collectorReadyPromise = Promise.resolve();
-    console.log(`[companion] attached to ${DEFAULT_SERVICE_URL}`);
-    return DEFAULT_SERVICE_URL;
-  }
   if (existingHealth) {
     console.log("[companion] port 43123 belongs to another collector; using an isolated port");
   }
 
   console.log("[companion] starting the embedded collector");
   const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
-  const { collector } = createDesktopCollectors({
+  availableCollectors = createDesktopCollectors({
+    connectedIds: [],
     codexHome,
     userData: app.getPath("userData"),
     claudeRoot: path.join(managedRootPath(), "claude"),
@@ -874,6 +874,7 @@ async function ensureCollectorService() {
       fallbackRoot: path.join(app.getPath("userData"), "copywriter"),
     }),
   });
+  const { collector } = availableCollectors;
 
   let api = createCollectorServer(collector, {
     host: "127.0.0.1",
@@ -885,11 +886,6 @@ async function ensureCollectorService() {
   } catch (error) {
     if (error?.code !== "EADDRINUSE") throw error;
     await api.stop();
-    const racedHealth = await collectorServiceHealth(DEFAULT_SERVICE_URL);
-    if (isCompatibleCollectorHealth(racedHealth, DUAL_COLLECTOR_IDENTITY)) {
-      collectorReadyPromise = Promise.resolve();
-      return DEFAULT_SERVICE_URL;
-    }
     api = createCollectorServer(collector, {
       host: "127.0.0.1",
       port: 0,
@@ -1581,6 +1577,13 @@ function requireSettingsMainFrame(event) {
 }
 
 function installIpcHandlers() {
+  installAgentConnectionIpc({ ipcMain, requireSettingsMainFrame, controller: agentConnections,
+    setDefault: async id => {
+      const preferences = await preferenceStore.update({ remoteControl: { defaultProviderId: id } });
+      applyPreferences(preferences);
+      return settingsState();
+    },
+  });
   installPetMenuIpc({ ipcMain, window: petMenuWindow, controller: petMenuController });
   const getNotebookMcpConfig = () => {
     if (!notebookMcpBridge?.ready) throw new Error("记事板连接尚未就绪，请重新启动应用。");
@@ -1593,9 +1596,16 @@ function installIpcHandlers() {
     getPreferences: () => preferenceStore.get(),
     savePreferences: patch => preferenceStore.update(patch),
     lifecycleStatus: () => claudeLifecycle?.status(),
+    runtimeStatus: () => connectedAgentIds.has('claude')
+      ? { available: true, authenticated: null } : getClaudeRuntimeStatus({ executablePath: preferenceStore.get().claude.executablePath }),
+    isConnected: id => connectedAgentIds.has(id),
     getStatusOptions: () => ({}),
     onSaved: async (preferences, patch) => {
       applyPreferences(preferences);
+      if (patch.claude?.executablePath !== undefined && agentConnections.connected('claude')) {
+        await agentConnections.disconnect('claude');
+        await agentConnections.connect('claude');
+      }
       if (patch.claude?.executablePath !== undefined) aiTextService?.configurationChanged();
       if (patch.claude?.autoLifecycleHooks !== undefined || patch.claude?.nodePath !== undefined) await claudeLifecycle?.sync();
     },
@@ -1782,6 +1792,7 @@ function installIpcHandlers() {
   });
   ipcMain.handle("settings:reset", async (event) => {
     requireTrustedSender(event);
+    for (const id of ['codex', 'claude']) await agentConnections.disconnect(id);
     const preferences = await preferenceStore.reset();
     await claudeLifecycle?.sync();
     aiTextService?.configurationChanged();
@@ -2084,6 +2095,7 @@ function installIpcHandlers() {
 }
 
 async function shutdownOwnedService() {
+  await agentConnections?.close();
   await claudeLifecycle?.close();
   await positionSaveQueue;
   await notebookMcpBridge?.stop();
@@ -2164,12 +2176,16 @@ if (!hasSingleInstanceLock) {
         console.log(`[agent-pet] using compatible managed data root: ${managedDataRoot}`);
       }
       preferenceStore = new PreferenceStore(preferencesPath());
+      agentRuntimes = new AgentRuntimeInstallation({ root: path.join(managedRootPath(), 'agent-runtimes'),
+        getPreferences: () => preferenceStore.get(), fetch: (url, options) => net.fetch(url, options) });
       desktopProviders = createDesktopProviders({
         codexHome: process.env.CODEX_HOME || path.join(os.homedir(), ".codex"),
         workingDirectory: copywriterPath(),
         usagePath: path.join(managedRootPath(), "claude", "usage.json"),
         getPreferences: () => preferenceStore.get(),
         loadKey: (connectionId) => secureCredentials.load(`ai.${connectionId}`),
+        isConnected: id => connectedAgentIds.has(id),
+        getRuntime: id => agentRuntimes.get(id),
       });
       agentProviderRegistry = desktopProviders.agents;
       usageProviderRegistry = desktopProviders.usage;
@@ -2217,13 +2233,17 @@ if (!hasSingleInstanceLock) {
       aiTextService = new AiTextService({
         getPreferences: () => preferenceStore.get(),
         providers: desktopProviders.text,
-        onStatus: (status) => settingsWindow?.send("ai:status", status),
+        onStatus: (status) => {
+          settingsWindow?.send("ai:status", status);
+          agentConnections?.observeAiStatus(status);
+        },
       });
       aiSettingsController = new AiSettingsController({
         preferences: preferenceStore, credentials: secureCredentials, service: aiTextService,
+        getAgentConnections: () => agentConnections?.snapshot() || {},
         onSaved: (preferences) => {
           scheduleCopywriter(preferences);
-          void aiTextService.check();
+          void aiSettingsController.check().catch(() => {});
         },
       });
       codexCopywriter = new PhrasePoolGenerator({
@@ -2238,6 +2258,7 @@ if (!hasSingleInstanceLock) {
       const preferences = await preferenceStore.load();
       claudeLifecycle = createClaudeLifecycleController({
         getPreferences: () => preferenceStore.get(),
+        isConnected: () => connectedAgentIds.has('claude'),
         getOptions: () => ({
           configDir: resolveClaudeConfigDirectory(),
           bridgePath: executableResourcePath(path.join(HERE, "claude", "hook-bridge.mjs")),
@@ -2245,7 +2266,40 @@ if (!hasSingleInstanceLock) {
         }),
       });
       activateAgentProvider(preferences);
+      agentConnections = new AgentConnectionController({
+        getPreferences: () => preferenceStore.get(),
+        savePreferences: patch => preferenceStore.update(patch),
+        prepare: (id, options) => agentRuntimes.prepare(id, options),
+        inspect: id => agentRuntimes.inspect(id),
+        checkAvailability: async (id, { signal }) => {
+          const catalog = await aiTextService.inspectConnection(id, {}, undefined, { signal });
+          if (!catalog?.models?.length) throw new Error('模型列表为空');
+          return { state: 'available', message: '登录与模型检查通过；实际额度以服务端调用结果为准。' };
+        },
+        apply: async (id, connected) => {
+          const wasConnected = connectedAgentIds.has(id);
+          if (connected) connectedAgentIds.add(id); else connectedAgentIds.delete(id);
+          try {
+            if (id === 'claude') {
+              const lifecycle = await claudeLifecycle.sync();
+              if (!connected && !lifecycle.ok) throw new Error('自动上报配置存在冲突，请先检查 Claude 接入状态再断开。');
+            }
+            await collectorReadyPromise;
+            await ownedCollector.setCollectors([...connectedAgentIds].map(key => availableCollectors[key]));
+          } catch (error) {
+            if (wasConnected) connectedAgentIds.add(id); else connectedAgentIds.delete(id);
+            await ownedCollector?.setCollectors([...connectedAgentIds].map(key => availableCollectors[key]));
+            if (id === 'claude') await claudeLifecycle.sync();
+            throw error;
+          }
+          aiTextService?.configurationChanged();
+          if (usageWindow?.isVisible()) usageWindow.refresh();
+        },
+        onChange: () => settingsWindow?.send('agent-providers:changed', settingsState().agentProviders),
+      });
       remoteCodexExecutor = new CodexRemoteExecutor({
+        resolveExecutable: async () => agentRuntimes.get('codex').executable,
+        createCodex: options => new (agentRuntimes.get('codex').module.Codex)(options),
         desktop: process.platform === "win32" ? new CodexDesktopExecutor({
           getTask: async (taskId, signal) => {
             const response = await fetch(`${serviceUrl}/api/v1/tasks/${encodeURIComponent(taskId)}`, {
@@ -2272,6 +2326,8 @@ if (!hasSingleInstanceLock) {
         registry: remoteTaskRegistry,
         executor: createDesktopExecutor({
           codex: remoteCodexExecutor,
+          isConnected: id => connectedAgentIds.has(id),
+          getRuntime: id => agentRuntimes.get(id),
           getPreferences: () => preferenceStore.get(),
           eventsDir: path.join(managedRootPath(), "claude", "events"),
           isSessionActive: id => claudeSessionActivity({ owned: Boolean(ownedCollector), claude: ownedCollector }, id),
@@ -2290,6 +2346,7 @@ if (!hasSingleInstanceLock) {
       applyPreferences(preferences);
       installIpcHandlers();
       serviceUrl = await ensureCollectorService();
+      await agentConnections.restore();
       await claudeLifecycle.sync();
       await createWindows();
       desktopWindowsReady = true;
@@ -2306,7 +2363,7 @@ if (!hasSingleInstanceLock) {
           console.error("[notifications] waiting for collector failed", error);
         });
       scheduleCopywriter(preferences, 3_000);
-      void aiTextService.check();
+      void aiSettingsController.check().catch(() => {});
       console.log("[companion] tray ready");
     })
     .catch((error) => {

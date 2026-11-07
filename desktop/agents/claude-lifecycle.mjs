@@ -3,6 +3,7 @@ import { resolveNodeExecutable } from '../claude/runtime.mjs';
 
 // All destinations are supplied by the main process, never by the renderer.
 export function createClaudeLifecycleController({ getPreferences, getOptions,
+  isConnected = () => true,
   resolveNode = resolveNodeExecutable,
   integration = { status: config.getClaudeLifecycleStatus, install: config.installClaudeLifecycle,
     remove: config.removeClaudeLifecycle } }) {
@@ -15,7 +16,14 @@ export function createClaudeLifecycleController({ getPreferences, getOptions,
       try {
         const preferences = getPreferences().claude || {};
         const options = await getOptions();
-        if (preferences.autoLifecycleHooks === false) {
+        if (!isConnected()) {
+          const current = await integration.status(options);
+          if (!current.ok) state = current;
+          else if (['installed', 'legacy-installed'].includes(current.state)) {
+            const removed = await integration.remove(options);
+            state = removed.ok ? { ...removed, state: 'disconnected' } : removed;
+          } else state = { ok: true, state: 'disconnected' };
+        } else if (preferences.autoLifecycleHooks === false) {
           const removed = await integration.remove(options);
           state = removed.ok ? { ...removed, state: 'disabled' } : removed;
         } else {
@@ -39,6 +47,7 @@ export function createClaudeLifecycleController({ getPreferences, getOptions,
     await queue;
     try {
       const current = await integration.status(await getOptions());
+      if (!isConnected() && current.ok && ['not-installed', 'not-detected'].includes(current.state)) return { ...current, state: 'disconnected' };
       if (current.state === 'not-installed') {
         if (getPreferences().claude?.autoLifecycleHooks === false) return { ...current, state: 'disabled' };
       }

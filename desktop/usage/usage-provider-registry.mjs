@@ -1,6 +1,7 @@
 export class UsageProviderRegistry {
-  constructor({ activeProviderId = "codex" } = {}) {
+  constructor({ activeProviderId = "codex", isConnected = () => true } = {}) {
     this.activeProviderId = activeProviderId;
+    this.isConnected = isConnected;
     this.providers = new Map();
   }
 
@@ -20,7 +21,7 @@ export class UsageProviderRegistry {
   }
 
   async getAllUsage(options = {}) {
-    const providers = await Promise.all([...this.providers.values()].map(async (provider) => {
+    const providers = await Promise.all([...this.providers.values()].filter(provider => this.isConnected(provider.id)).map(async (provider) => {
       try {
         return { ...await provider.getUsage(options), providerId: provider.id };
       } catch {
@@ -38,7 +39,7 @@ export class UsageProviderRegistry {
 
   async getCurrentUsage(options = {}) {
     const provider = this.providers.get(this.activeProviderId);
-    if (!provider) {
+    if (!provider || !this.isConnected(this.activeProviderId)) {
       return {
         providerId: this.activeProviderId || "unknown",
         viewType: "unavailable",

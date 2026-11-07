@@ -6,7 +6,7 @@ import { publicAiError } from "../desktop/ai/errors.mjs";
 
 const schema = { type: "object", properties: { text: { type: "string", minLength: 1 } }, required: ["text"], additionalProperties: false };
 function fixture() {
-  const preferences = { agent: { activeProviderId: "codex" }, ai: normalizeAiPreferences() };
+  const preferences = { agent: { activeProviderId: "codex" }, ai: { ...normalizeAiPreferences(), connectionId: "agent" } };
   const catalog = { models: [{ id: "a" }, { id: "b" }], defaultModelId: "a", name: "test" };
   const calls = [];
   let closes = 0;

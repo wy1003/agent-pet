@@ -7,6 +7,7 @@ export function executableResourcePath(file) {
 
 // Renderer sends only preferences or an action. All write targets come from the host.
 export function installClaudeSettingsIpc({ ipcMain, requireSettingsMainFrame, getOptions, getStatusOptions = getOptions, getPreferences,
+  isConnected = () => true,
   savePreferences, onSaved, confirm, lifecycleStatus = () => ({ state: 'pending' }), runtimeStatus = getClaudeRuntimeStatus,
   integration = { status: getClaudeIntegrationStatus, preview: previewClaudeIntegration,
     install: installClaudeIntegration, remove: removeClaudeIntegration } }) {
@@ -20,6 +21,7 @@ export function installClaudeSettingsIpc({ ipcMain, requireSettingsMainFrame, ge
     message: "接入安装不代表已认证；此处不发起模型请求。SDK 恢复不等于原窗口注入。" }));
   handle("claude:preview", async () => integration.preview(await getOptions()));
   handle("claude:install", async () => {
+    if (!isConnected('claude')) throw new Error('请先连接 Claude Code，再安装可选增强。');
     const options = await getOptions();
     const preview = await integration.preview(options);
     if (!preview.ok) return preview;
@@ -48,6 +50,7 @@ export function installClaudeSettingsIpc({ ipcMain, requireSettingsMainFrame, ge
     if (Object.keys(claude).length) patch.claude = claude;
     if (Object.hasOwn(value, "defaultProviderId")) {
       if (!["codex", "claude"].includes(value.defaultProviderId)) throw new TypeError("未知任务来源");
+      if (!isConnected(value.defaultProviderId)) throw new Error('请先连接所选智能体。');
       patch.remoteControl = { defaultProviderId: value.defaultProviderId };
     }
     if (Object.hasOwn(value, "usageProviderId")) {

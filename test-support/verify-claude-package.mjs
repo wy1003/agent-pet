@@ -10,7 +10,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const require = createRequire(import.meta.url);
-const { extractFile } = require("@electron/asar");
+const { extractFile, listPackage } = require("@electron/asar");
 const source = fileURLToPath(new URL("../", import.meta.url));
 const built = path.resolve(process.argv[2] || path.join(source, "dist", "win-unpacked"));
 const archive = path.join(built, "resources", "app.asar");
@@ -22,10 +22,12 @@ for (const field of ["name", "version", "main", "type"]) assert.equal(packagedPa
 for (const relative of ["desktop/main.mjs", "desktop/preferences.mjs", "desktop/agents/desktop-runtime.mjs", "desktop/agents/claude-lifecycle.mjs", "desktop/agents/claude-settings.mjs", "desktop/claude/runtime.mjs", "desktop/claude/remote-executor.mjs", "desktop/claude/hook-bridge.mjs", "desktop/claude/statusline-bridge.mjs", "desktop/claude/integration.mjs", "desktop/notebook/mcp/stdio.mjs", "desktop/notebook/mcp/claude-connection.mjs", "desktop/preload.cjs", "desktop/windows/window-contracts.mjs", "public/settings.html", "public/settings.css", "src/claude-collector.mjs", "src/claude-discovery.mjs", "src/claude-transcript.mjs", "src/multi-agent-collector.mjs", "public/usage-card.js", "public/settings.js"]) {
   assert.ok(extractFile(archive, path.normalize(relative)).equals(await readFile(path.join(source, relative))), `stale packaged file: ${relative}`);
 }
-assert.ok((await stat(path.join(unpacked, "node_modules", "@anthropic-ai", "claude-agent-sdk-win32-x64", "claude.exe"))).size > 0);
-const packagedSdk = await import(pathToFileURL(path.join(unpacked, "node_modules", "@anthropic-ai", "claude-agent-sdk", "sdk.mjs")).href);
-assert.equal(typeof packagedSdk.query, "function"); // Import only: never query a model.
-console.log("Packaged source, Claude binary, and SDK import verified.");
+assert.ok(!listPackage(archive).some(file => /node_modules[/\\](?:@anthropic-ai[/\\]claude-agent-sdk|@openai[/\\]codex)/.test(file)), 'optional SDKs and binaries must not ship in the installer');
+for (const file of ['connection-controller.mjs', 'runtime-installation.mjs', 'runtime-manifest.json']) {
+  const relative = `desktop/agents/${file}`;
+  assert.ok(extractFile(archive, path.normalize(relative)).equals(await readFile(path.join(source, relative))), `stale packaged file: ${relative}`);
+}
+console.log("Packaged source and on-demand runtime manifest verified; optional SDKs and binaries are absent.");
 
 const temporary = await mkdtemp(path.join(os.tmpdir(), "agent-pet-package-中文 "));
 const env = { ...process.env, HOME: temporary, USERPROFILE: temporary, APPDATA: temporary, LOCALAPPDATA: temporary,

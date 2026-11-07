@@ -49,14 +49,14 @@ test("desktop factory forwards the same auxiliary-project exclusions to both col
 test("automatic source snapshots preserve both legacy AI alias resolutions and pinned models", async t => {
   const root = await fixture(t);
   const { createDesktopProviders } = await runtime();
-  assert.equal(AI_CONNECTIONS.find(item => item.id === "agent").name, "沿用既有 AI 来源");
+  assert.equal(AI_CONNECTIONS.some(item => item.id === "agent"), false);
   for (const activeProviderId of ["codex", "claude"]) {
     const preferences = normalizePreferences({ agent: { activeProviderId }, ai: { connectionId: "agent", modelMode: "pinned", modelId: "original-model" }, remoteControl: { defaultProviderId: "claude" } });
     const before = JSON.stringify(preferences);
     const providers = createDesktopProviders({ codexHome: root, workingDirectory: root, usagePath: path.join(root, "missing.json"), getPreferences: () => preferences });
     providers.agents.setActiveProvider(activeProviderId);
-    assert.deepEqual(providers.agents.snapshot().providers.map(p => p.state), ["auto", "auto"]);
-    assert.match(providers.agents.snapshot().providers.find(p => p.id === "claude").description, /日志自动发现.*自动配置完成上报/);
+    assert.deepEqual(providers.agents.snapshot().providers.map(p => p.state), ["disconnected", "disconnected"]);
+    assert.match(providers.agents.snapshot().providers.find(p => p.id === "claude").description, /连接后发现.*采集任务状态/);
     assert.equal(resolveAiConnection(preferences), activeProviderId);
     assert.equal(JSON.stringify(preferences), before);
   }
@@ -155,8 +155,9 @@ test("task-source selection keeps the previously resolved text connection and pi
   const before = normalizePreferences({ ai: { connectionId: "agent", modelMode: "pinned", modelId: "existing-model" } });
   const patch = agentSelectionPatch(before, "claude");
   assert.equal(patch.agent.activeProviderId, "claude");
-  assert.equal(patch.ai.connectionId, "codex");
-  assert.equal(patch.ai.modelId, "existing-model");
+  const after = normalizePreferences({ ...before, ...patch });
+  assert.equal(after.ai.connectionId, "codex");
+  assert.equal(after.ai.modelId, "existing-model");
 });
 
 const inbound = (id, text) => ({ channelId: "test", accountId: "test", messageId: id,

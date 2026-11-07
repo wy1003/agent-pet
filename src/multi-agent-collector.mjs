@@ -104,6 +104,34 @@ export class MultiAgentCollector extends EventEmitter {
       if (errors.length) throw new AggregateError(errors, "Collector stop failed");
     });
   }
+  setCollectors(collectors) {
+    return this.#enqueue(async () => {
+      const next = [...new Set(collectors)];
+      const removed = this.collectors.filter(collector => !next.includes(collector));
+      const added = next.filter(collector => !this.collectors.includes(collector));
+      for (const collector of removed) {
+        await collector.stop();
+        for (const [owner, event, handler] of this.bindings) if (owner === collector) collector.off(event, handler);
+        this.bindings = this.bindings.filter(([owner]) => owner !== collector);
+        for (const task of this.#list(collector, 'getTasks', {})) this.emit('task.removed', task);
+        this.readCache.delete(collector);
+        this.readFailures.delete(collector);
+        this.startFailures.delete(collector);
+      }
+      this.collectors = next;
+      if (this.started) for (const collector of added) {
+        for (const event of EVENTS) {
+          const handler = value => { if (event === 'session.updated') this.sessions.set(value.sessionId, value); this.emit(event, value); };
+          collector.on(event, handler);
+          this.bindings.push([collector, event, handler]);
+        }
+        try { await collector.start(); this.startFailures.delete(collector); }
+        catch (error) { this.startFailures.add(collector); throw error; }
+        for (const task of this.#list(collector, 'getTasks', {})) this.emit('task.updated', task);
+      }
+      this.#refreshSessions();
+    });
+  }
   scanOnce() {
     return this.#enqueue(async () => {
       await Promise.all(this.collectors.map(async (collector) => {

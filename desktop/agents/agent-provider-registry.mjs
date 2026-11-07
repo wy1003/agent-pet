@@ -49,14 +49,15 @@ export class AgentProviderRegistry {
     return this.providers.get(this.activeProviderId) || null;
   }
 
-  snapshot() {
+  snapshot(connections = {}) {
     return {
       activeProviderId: this.activeProviderId,
       providers: [...this.providers.values()].map((provider) => ({
         ...provider,
         capabilities: { ...provider.capabilities },
         // Collection capability is not proof of authentication or a discovered session.
-        state: "auto",
+        state: "disconnected",
+        ...connections[provider.id],
       })),
     };
   }

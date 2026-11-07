@@ -18,6 +18,12 @@ function reportSize() {
 }
 
 function renderProviders(providers) {
+  if (!providers.length) {
+    const empty = document.createElement('p');
+    empty.textContent = '尚未连接智能体，请在设置中连接后查看额度。';
+    root.replaceChildren(empty);
+    return;
+  }
   root.replaceChildren(...providers.map(snapshot => {
     const source = sources.find(item => item.providerId === snapshot.providerId);
     // The quota renderers keep provider identity and retry controls even when unavailable.

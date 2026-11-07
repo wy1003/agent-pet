@@ -1,5 +1,4 @@
 export const AI_CONNECTIONS = Object.freeze([
-  { id: "agent", name: "沿用既有 AI 来源" },
   { id: "codex", name: "Codex" },
   { id: "claude", name: "Claude Code" },
   { id: "deepseek", name: "DeepSeek" },
@@ -18,7 +17,7 @@ export function normalizeAiPreferences(value = {}) {
     };
   }
   return {
-    connectionId: AI_CONNECTIONS.some((item) => item.id === value?.connectionId) ? value.connectionId : "agent",
+    connectionId: AI_CONNECTIONS.some((item) => item.id === value?.connectionId) ? value.connectionId : "",
     modelMode: value?.modelMode === "pinned" ? "pinned" : "default",
     modelId: clean(value?.modelId),
     connections,
@@ -26,8 +25,10 @@ export function normalizeAiPreferences(value = {}) {
 }
 
 export function resolveAiConnection(preferences) {
+  // Compatibility for callers holding a pre-migration snapshot.
+  if (preferences?.ai?.connectionId === "agent") return preferences?.agent?.activeProviderId || "codex";
   const ai = normalizeAiPreferences(preferences?.ai);
-  return ai.connectionId === "agent" ? preferences?.agent?.activeProviderId || "codex" : ai.connectionId;
+  return ai.connectionId;
 }
 
 export function aiConfigurationKey(preferences) {

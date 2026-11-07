@@ -1,7 +1,7 @@
 {
   "name": "agent-pet",
   "productName": "Agent Pet",
-  "version": "0.12.4",
+  "version": "0.13.11",
   "private": true,
   "main": "desktop/main.mjs",
   "type": "module",
@@ -33,13 +33,12 @@
     "pngjs": "^7.0.0"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.318",
     "@modelcontextprotocol/sdk": "^1.32.2",
-    "@openai/codex-sdk": "^0.146.0",
     "electron-updater": "^6.6.2",
     "fflate": "^0.8.2",
     "qrcode": "1.5.4",
-    "zod": "^4.6.7"
+    "zod": "^4.6.7",
+    "tar": "7.5.22"
   },
   "build": {
     "appId": "io.github.wy1003.agentpet",
@@ -63,7 +62,9 @@
       "public/**/*",
       "src/**/*",
       "package.json",
-      "LICENSE"
+      "LICENSE",
+      "!node_modules/@openai/codex*/**",
+      "!node_modules/@anthropic-ai/claude-agent-sdk*/**"
     ],
     "extraResources": [
       {

@@ -56,10 +56,11 @@ test(`the real HTTP service serves ${pageName} and every transitive static modul
     assert.match(actionsRule, /(?:^|;)\s*width:\s*\d+(?:px|rem)/, 'shared action columns have equal width, not content-dependent width');
     assert.match(actionsRule, /max-width:\s*100%/, 'action column remains bounded in narrow windows');
     assert.doesNotMatch(html, /data-claude-setting="usageProviderId"/);
-    assert.match(html, /生命周期 Hook 自动确认完成/);
+    assert.match(html, /以下选项仅作用于 Claude Code/);
+    assert.match(html, /data-agent-setting="defaultProviderId"/);
     assert.match(html, /data-claude-setting="autoLifecycleHooks"/);
     assert.match(html, /可选增强/);
-    for (const key of ["executablePath", "nodePath", "defaultProviderId", "enableStatusline"]) {
+    for (const key of ["executablePath", "nodePath", "enableStatusline"]) {
       assert.ok(html.includes(`data-claude-setting="${key}"`));
     }
     assert.ok(visited.has(`${base}/pet-library-controller.js`));

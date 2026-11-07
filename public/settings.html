@@ -102,58 +102,138 @@
         </section>
 
         <section id="ai" class="settings-section" data-settings-page="ai" hidden>
-          <div class="section-heading"><div><h2>智能体与 AI</h2><p>自动发现两个任务来源，独立设置生成文案和日报的 AI 服务。</p></div></div>
-          <div class="general-subsection-heading">
-            <h3>任务来源</h3>
-            <p>Codex 与 Claude 同时自动采集本地会话，额度并列显示。无需选择来源，也不会改变文本模型或已排队任务。</p>
-          </div>
-          <div id="agent-provider-list" class="agent-provider-list" aria-live="polite">
-            <div class="agent-provider-placeholder">正在读取自动采集来源…</div>
-          </div>
-          <p id="agent-provider-status" class="agent-provider-status" role="status"></p>
-          <div class="setting-list">
-            <label class="setting-row select-row"><span><strong>默认新建代理</strong><small>仅影响之后收到的新任务；续问仍交给原会话来源。</small></span><select data-claude-setting="defaultProviderId"><option value="codex">Codex</option><option value="claude">Claude Code</option></select></label>
-          </div>
-          <div class="general-subsection-heading"><h3>Claude Code 自动发现</h3><p>日志自动发现会话，生命周期 Hook 自动确认完成，无需手动安装或选择来源。只备份并维护本应用状态上报项，不修改认证、模型、权限，不自动安装 MCP 或状态栏。</p></div>
-          <label class="setting-row"><span><strong>自动确认 Claude 任务完成</strong><small>自动发现 Node.js 20+ 并维护生命周期 Hook。首次配置后请新开 Claude 会话或重载扩展；关闭只移除本应用自动管理项，日志发现仍保留。</small></span><input type="checkbox" role="switch" data-claude-setting="autoLifecycleHooks" /></label>
-          <details class="claude-advanced">
-            <summary>可选增强与高级设置（Hook / 状态栏）</summary>
-          <div class="setting-list">
-            <label class="field"><span>Claude 运行时路径（可选）</span><input type="text" data-claude-setting="executablePath" placeholder="留空自动发现 Claude 可执行文件" autocomplete="off" /></label>
-            <label class="field"><span>Node.js 路径覆盖（可选，留空自动发现）</span><input type="text" data-claude-setting="nodePath" placeholder="例如 C:\Program Files\nodejs\node.exe" autocomplete="off" /><small>使用 Node.js 20 或更新版本；不是 PowerShell、Git Bash 或 Agent Pet 主程序。</small></label>
-            <label class="setting-row"><span><strong>安装时接入状态栏额度采集</strong><small>保留原状态栏输出。只观测可靠配额，缺失或过期不会显示为 0%。变更后需移除旧接入再安装；保存不会改写已安装配置。Windows 默认使用 Git Bash。</small></span><input type="checkbox" role="switch" data-claude-setting="enableStatusline" /></label>
-          </div>
-          <div class="ai-connection-result" aria-live="polite">
-            <p id="claude-status" role="status">接入状态尚未读取；未验证认证。</p>
-            <p>SDK 新建和恢复不是向原 CLI / VS Code 窗口注入。原会话活动或状态未知时拒绝恢复；仅停止本应用掌控的请求。</p>
-            <button id="claude-refresh" type="button" class="secondary-button">刷新接入状态</button>
-            <button id="claude-preview" type="button" class="secondary-button">预览安装项</button>
-            <button id="claude-install" type="button" class="secondary-button">安装接入…</button>
-            <button id="claude-remove" type="button" class="secondary-button">移除接入…</button>
-            <pre id="claude-preview-output" hidden></pre>
-          </div>
-          </details>
-          <div class="general-subsection-heading">
-            <h3>文本生成</h3>
-            <p>用于播报文案和工作日报，可独立于任务来源选择。</p>
-          </div>
-          <div id="ai-settings" class="ai-settings">
-            <div class="setting-list">
-              <label class="setting-row select-row"><span><strong>生成服务</strong><small>沿用既有 AI 来源或单独指定服务，不随自动采集来源改变。</small></span><select id="ai-connection" aria-label="AI 连接"></select></label>
-              <label class="setting-row select-row"><span><strong>模型选择方式</strong><small>更改仅影响新任务，运行中的任务继续使用原模型。</small></span><select id="ai-model-mode"><option value="default">跟随连接默认模型</option><option value="pinned">指定模型</option></select></label>
-              <label id="ai-pinned-row" class="setting-row select-row" hidden><span><strong>指定模型</strong><small>模型不可用时保留选择，并提示重新选择。</small></span><select id="ai-model" aria-label="指定模型"></select></label>
+          <div class="section-heading"><div><h2>智能体与 AI</h2><p>连接你使用的智能体，独立设置生成文案和日报的 AI 服务。</p></div></div>
+          <div class="ai-overview-group" role="group" aria-labelledby="agent-connections-title">
+            <div class="general-subsection-heading">
+              <h3 id="agent-connections-title">智能体连接</h3>
+              <p>可同时连接多个智能体，缺少的组件会在连接时下载。</p>
             </div>
-            <div id="ai-http-fields" class="ai-http-fields" hidden>
-              <label class="field"><span>服务地址</span><input id="ai-base-url" type="url" placeholder="https://api.example.com/v1" autocomplete="off" /><small>填写 API 根地址，模型列表从该连接获取。</small></label>
-              <label class="field"><span>API 密钥</span><input id="ai-api-key" type="password" autocomplete="new-password" placeholder="输入新密钥，离开输入框后自动保存" /><small id="ai-key-status">尚未设置密钥</small></label>
-              <button id="ai-clear-key" type="button" class="secondary-button">移除密钥</button>
-              <label class="field"><span>连接默认模型</span><select id="ai-default-model" aria-label="连接默认模型"></select><small>服务未声明默认模型时，请从服务端列表中指定；不会自动选取列表第一项。</small></label>
+            <div class="agent-connections-panel setting-list">
+              <div id="agent-provider-list" class="agent-provider-list" aria-live="polite">
+                <div class="agent-provider-placeholder">正在读取智能体连接…</div>
+              </div>
+              <p id="agent-provider-status" class="agent-provider-status" role="status"></p>
             </div>
-            <div class="ai-connection-result" aria-live="polite">
-              <p id="ai-save-status" role="status"></p>
-              <p id="ai-connection-status" role="status">正在读取 AI 设置…</p>
-              <p id="ai-connection-details"></p>
-              <button id="ai-check" type="button" class="secondary-button">刷新模型并检查连接</button>
+          </div>
+          <div class="ai-overview-group" role="group" aria-labelledby="pet-ai-title">
+            <div class="general-subsection-heading">
+              <h3 id="pet-ai-title">桌宠 AI</h3>
+              <p>为桌宠播报和工作日报选择 AI 服务与模型。</p>
+            </div>
+            <div id="ai-settings" class="ai-settings setting-list">
+              <div class="ai-service-choice">
+                <label id="ai-connection-row" class="field"><span>AI 服务</span><small>仅可选择可用连接，用于桌宠播报和工作日报。</small><select id="ai-connection" aria-label="AI 服务"></select></label>
+                <p id="ai-empty" class="ai-service-notice" role="status" hidden>暂无可用的 AI 服务</p>
+                <button id="ai-add" type="button" class="agent-settings-link" aria-expanded="false" aria-controls="ai-add-panel">＋ 添加 AI 服务</button>
+              </div>
+              <div id="ai-add-panel" class="ai-add-panel" role="group" aria-labelledby="ai-add-title" hidden>
+                <div class="ai-add-heading"><strong id="ai-add-title">添加 AI 服务</strong><button id="ai-add-cancel" type="button" class="agent-settings-link">取消</button></div>
+                <label class="field"><span>服务类型</span><select id="ai-add-type"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek">DeepSeek</option><option value="compatible">其他兼容接口</option></select></label>
+                <p id="ai-add-agent-help" class="ai-service-notice">连接后使用客户端的登录与默认模型，缺少的组件会在连接时下载。</p>
+                <div id="ai-add-http" class="ai-add-http" hidden>
+                  <label class="field"><span>API 密钥</span><input id="ai-add-key" type="password" placeholder="填写密钥后获取可用模型" autocomplete="new-password" /></label>
+                  <button id="ai-add-edit-endpoint" type="button" class="agent-settings-link" aria-expanded="false">修改服务地址</button>
+                  <label id="ai-add-url-row" class="field"><span>服务地址</span><input id="ai-add-url" type="url" placeholder="https://api.example.com/v1" autocomplete="off" /></label>
+                  <button id="ai-add-fetch" type="button" class="secondary-button">获取可用模型</button>
+                  <label id="ai-add-model-row" class="field" hidden><span>使用模型</span><select id="ai-add-model" aria-label="添加服务的模型"></select></label>
+                </div>
+                <p id="ai-add-status" class="ai-service-notice" role="status"></p>
+                <button id="ai-add-confirm" type="button" class="secondary-button">连接并使用</button>
+              </div>
+              <div id="ai-http-fields" class="ai-http-fields" hidden>
+                <label id="ai-base-url-row" class="field"><span>服务地址</span><input id="ai-base-url" type="url" placeholder="https://api.example.com/v1" autocomplete="off" /><small>填写服务的 API 根地址。</small></label>
+                <label class="field"><span>API 密钥</span><input id="ai-api-key" type="password" autocomplete="new-password" placeholder="输入密钥，离开输入框后自动保存并获取模型" /><small id="ai-key-status">请先填写密钥，保存后自动获取可用模型。</small></label>
+                <div class="ai-key-actions"><button id="ai-clear-key" type="button" class="secondary-button" hidden>移除密钥</button><button id="ai-edit-endpoint" type="button" class="agent-settings-link" aria-expanded="false">修改服务地址</button></div>
+                <p id="ai-setup-status" class="ai-setup-status" role="status">请先填写 API 密钥。</p>
+              </div>
+              <label id="ai-model-mode-row" class="setting-row select-row"><span><strong>模型设置</strong><small>更改仅影响新任务，运行中的任务继续使用原模型。</small></span><select id="ai-model-mode"><option value="default">跟随连接默认模型</option><option value="pinned">指定模型</option></select></label>
+              <label id="ai-pinned-row" class="setting-row select-row" hidden><span><strong id="ai-model-label">指定模型</strong><small id="ai-model-help">模型不可用时保留选择，并提示重新选择。</small></span><select id="ai-model" aria-label="指定模型"></select></label>
+              <div class="ai-connection-result">
+                <div id="ai-connection-summary" class="ai-connection-summary">
+                  <span id="ai-status-indicator" class="ai-status-indicator" data-state="unchecked" role="img" aria-label="尚未检查连接" title="尚未检查连接" tabindex="0">
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path class="ai-status-check" d="m5 10 3.2 3.2L15 6.5" />
+                      <path class="ai-status-error" d="M10 5.5v5M10 14h.01" />
+                      <circle class="ai-status-idle" cx="10" cy="10" r="3" />
+                      <circle class="ai-status-spinner" cx="10" cy="10" r="7" stroke-dasharray="30 14" />
+                    </svg>
+                  </span>
+                  <div class="ai-current-model"><span>当前模型</span><strong id="ai-current-model">等待确认</strong></div>
+                  <button id="ai-check" type="button" class="secondary-button ai-recheck" aria-label="刷新模型并检查连接" title="刷新模型并检查连接">
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16.2 7A6.5 6.5 0 1 0 16.5 12M16.2 3.5V7h-3.5" /></svg>
+                    <span>重新检查</span>
+                  </button>
+                </div>
+                <p id="ai-save-status" role="status"></p>
+                <p id="ai-connection-status" role="status">正在读取 AI 设置…</p>
+                <details id="ai-connection-details" class="ai-connection-details">
+                  <summary>连接详情</summary>
+                  <dl>
+                    <div><dt>连接</dt><dd id="ai-detail-connection"></dd></div>
+                    <div id="ai-detail-provider-row" hidden><dt>模型服务</dt><dd id="ai-detail-provider"></dd></div>
+                    <div id="ai-detail-runtime-row" hidden><dt>运行程序版本</dt><dd id="ai-detail-runtime"></dd></div>
+                  </dl>
+                  <p id="ai-check-description"></p>
+                </details>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="agent-detail" class="settings-section" data-settings-page="agent-detail" hidden aria-labelledby="agent-detail-title">
+          <button id="agent-detail-back" type="button" class="agent-detail-back">← 智能体与 AI</button>
+          <div class="section-heading"><div><h2 id="agent-detail-title" tabindex="-1">连接设置</h2><p>管理这个智能体的连接与专属选项。</p></div></div>
+          <div class="ai-overview-group" role="group" aria-labelledby="agent-detail-connection-title">
+            <div class="general-subsection-heading"><h3 id="agent-detail-connection-title">连接状态</h3></div>
+            <div class="setting-list agent-connections-panel">
+              <div id="agent-detail-connection" class="agent-detail-connection" aria-live="polite"></div>
+              <div class="agent-detail-card-footer">
+                <p id="agent-detail-help" class="agent-detail-help"></p>
+                <p id="agent-detail-message" class="agent-detail-help" role="status"></p>
+              </div>
+            </div>
+          </div>
+          <div data-agent-options="codex" class="agent-detail-options" hidden>
+            <div class="ai-overview-group">
+              <div class="general-subsection-heading"><h3>任务与额度</h3><p>连接后自动读取本机 Codex 会话和可用额度，当前无需额外配置。</p></div>
+              <div class="agent-detail-note"><strong>使用 Codex 的现有设置</strong><p>登录、模型与权限由 Codex 客户端管理。用于播报和日报的模型可在上一级“桌宠 AI”中单独选择。</p></div>
+            </div>
+          </div>
+          <div data-agent-options="claude" class="agent-detail-options" hidden>
+            <div class="ai-overview-group" role="group" aria-labelledby="claude-sync-title">
+              <div class="general-subsection-heading"><h3 id="claude-sync-title">任务同步</h3><p>连接后自动发现本地会话。以下选项仅作用于 Claude Code。</p></div>
+              <div class="setting-list">
+                <label class="setting-row"><span><strong>自动确认任务完成</strong><small>及时识别任务结束。首次开启后，请新开 Claude 会话或重载扩展；关闭后仍会读取本地会话日志。</small></span><input type="checkbox" role="switch" data-claude-setting="autoLifecycleHooks" /></label>
+                <div class="agent-detail-status-row"><span>完成上报</span><span id="claude-lifecycle-state" class="agent-detail-state" role="status">待检查</span></div>
+              </div>
+            </div>
+            <div class="agent-detail-advanced">
+              <details class="agent-settings-disclosure setting-list" id="claude-runtime-settings">
+                <summary><span class="agent-disclosure-label"><strong>运行环境</strong><small>自动查找本机程序，通常无需修改。</small></span><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg></summary>
+                <div class="agent-disclosure-content">
+                  <div class="agent-detail-status-row"><span>Claude 运行程序</span><span id="claude-runtime-state" class="agent-detail-state" role="status">待检查</span></div>
+                  <label class="field"><span>Claude 程序路径</span><input type="text" data-claude-setting="executablePath" placeholder="留空自动查找" autocomplete="off" /><small>可选。仅在自动查找失败或需要指定版本时填写。</small></label>
+                  <label class="field"><span>Node.js 程序路径</span><input type="text" data-claude-setting="nodePath" placeholder="留空自动查找 Node.js 20+" autocomplete="off" /><small>用于任务完成上报。请选择 Node.js 20 或更新版本的程序。</small></label>
+                </div>
+              </details>
+              <details class="claude-advanced agent-settings-disclosure setting-list">
+                <summary><span class="agent-disclosure-label"><strong>可选增强</strong><small>状态栏额度采集与接入配置管理。</small></span><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg></summary>
+                <div class="agent-disclosure-content">
+                  <label class="setting-row"><span><strong>采集状态栏额度</strong><small>安装接入时启用，保留原状态栏输出。变更后需移除旧接入再安装。</small></span><input type="checkbox" role="switch" data-claude-setting="enableStatusline" /></label>
+                  <div class="agent-detail-status-row"><span>增强接入</span><span id="claude-integration-state" class="agent-detail-state" role="status">待检查</span><button id="claude-refresh" type="button" class="agent-settings-link">刷新状态</button></div>
+                  <div class="agent-integration-management">
+                    <p class="agent-detail-help">安装后请重启 Claude CLI 或重新加载 VS Code，使当前会话加载配置。</p>
+                    <div class="agent-detail-actions">
+                      <button id="claude-install" type="button" class="secondary-button agent-install-action">安装接入…</button>
+                      <button id="claude-preview" type="button" class="secondary-button">预览安装项</button>
+                      <button id="claude-remove" type="button" class="secondary-button agent-remove-action">移除接入…</button>
+                    </div>
+                    <p id="claude-status" class="agent-detail-help" role="status"></p>
+                    <pre id="claude-preview-output" aria-label="接入配置预览" tabindex="0" hidden></pre>
+                    <details class="agent-integration-notes"><summary>使用说明</summary><p>接入状态仅反映本地配置，不验证账号认证。额度缺失或过期时不会显示为 0%；Windows 状态栏默认使用 Git Bash。</p><p>远程新建和继续任务会单独发起请求，不会向原 CLI / VS Code 窗口输入内容。原会话活动或状态未知时不恢复；仅停止本应用发出的请求。</p></details>
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
         </section>
@@ -542,6 +622,12 @@
               </label>
             </div>
             <p id="remote-control-status" class="remote-control-status" role="status">当前版本尚未启用指令操作后端，功能保持关闭。</p>
+            <label class="field remote-new-task-setting">
+              <span>新任务使用的智能体</span>
+              <select data-agent-setting="defaultProviderId" aria-describedby="remote-new-task-help"><option value="codex">Codex</option><option value="claude">Claude Code</option></select>
+              <small id="remote-new-task-help">从微信等远程渠道新建任务时使用。继续已有会话时，仍由原智能体处理。</small>
+            </label>
+            <button id="remote-agent-connections" type="button" class="agent-settings-link">管理智能体连接 ›</button>
             <details id="remote-command-help" class="remote-command-help">
               <summary>查看指令帮助</summary>
               <div class="remote-command-help-body">

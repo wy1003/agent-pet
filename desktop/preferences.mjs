@@ -14,11 +14,12 @@ const PET_REDUCED_MOTION = ["system", "reduce", "full"];
 const NOTEBOOK_STYLES = ["classic", "glass"];
 
 export const DEFAULT_PREFERENCES = Object.freeze({
-  version: 20,
+  version: 22,
   ai: normalizeAiPreferences(),
   agent: {
     activeProviderId: "codex",
     usageProviderId: "active",
+    connections: { codex: false, claude: false },
   },
   claude: { executablePath: "", nodePath: "", enableStatusline: false, autoLifecycleHooks: true },
   rules: {
@@ -195,13 +196,16 @@ export function normalizePreferences(value) {
 
   return {
     version: defaults.version,
-    ai: normalizeAiPreferences(input.ai),
+    ai: normalizeAiPreferences({ ...input.ai, connectionId: input.ai?.connectionId === "agent"
+      || (input.ai?.connectionId === undefined && Number(input.version) < 22)
+      ? agent.activeProviderId || "codex" : input.ai?.connectionId }),
     agent: {
       activeProviderId: typeof agent.activeProviderId === "string"
         && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(agent.activeProviderId)
         ? agent.activeProviderId.toLowerCase()
         : defaults.agent.activeProviderId,
       usageProviderId: oneOf(agent.usageProviderId, ["active", "codex", "claude"], defaults.agent.usageProviderId),
+      connections: { codex: agent.connections?.codex === true, claude: agent.connections?.claude === true },
     },
     claude: {
       executablePath: typeof input.claude?.executablePath === "string" ? input.claude.executablePath.trim().slice(0, 2000) : "",

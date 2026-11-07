@@ -17,9 +17,9 @@ export class HttpTextProvider {
     Object.assign(this, { id, name, loadKey, fetchImpl });
   }
 
-  async open(config, { signal } = {}) {
+  async open(config, { signal, credential: suppliedCredential } = {}) {
     const baseUrl = normalizeAiBaseUrl(config.baseUrl);
-    const credential = await this.loadKey(this.id);
+    const credential = suppliedCredential || await this.loadKey(this.id);
     // Credentials are bound to the saved endpoint; changing it never forwards an old key.
     const apiKey = credential?.baseUrl === baseUrl ? credential.apiKey : "";
     if (!apiKey) throw aiError("authentication", "请为当前服务地址保存 API 密钥，再检查连接。");

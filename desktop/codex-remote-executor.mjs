@@ -1,5 +1,4 @@
 import { stat, realpath } from "node:fs/promises";
-import { Codex } from "@openai/codex-sdk";
 import { buildRemoteRequest } from "../src/remote-request.mjs";
 import { resolveCodexExecutable } from "./codex-runtime.mjs";
 
@@ -132,7 +131,7 @@ export class CodexRemoteExecutor {
     this.codex = options.codex || null;
     this.codexOptions = options.codexOptions || {};
     this.resolveExecutable = options.resolveExecutable || resolveCodexExecutable;
-    this.createCodex = options.createCodex || ((value) => new Codex(value));
+    this.createCodex = options.createCodex || (async value => new (await import('@openai/codex-sdk')).Codex(value));
     this.onDiagnostic = options.onDiagnostic || (() => {});
     this.desktop = options.desktop || null;
   }

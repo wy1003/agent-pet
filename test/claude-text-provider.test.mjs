@@ -45,6 +45,24 @@ test("checking Claude catalog does not submit a user prompt", () => inDirectory(
   assert.equal(connection.catalog.models.some((model) => model.id === "test-model"), true);
   connection.close();
 }));
+test("Claude no-auth sentinel sources and empty catalogs cannot count as available", () => inDirectory(async (workingDirectory) => {
+  for (const account of [{}, { tokenSource: 'none', apiKeySource: 'none' }, { tokenSource: 'none', apiKeySource: 'none', email: 'cached@example.com' }]) {
+    const f = fixture();
+    const query = args => ({ ...f.query(args), accountInfo: async () => account });
+    await assert.rejects(new ClaudeTextProvider({ workingDirectory, query }).open({}), { code: 'authentication' });
+    assert.equal(f.calls[0].closed, true);
+    assert.notEqual(typeof f.calls[0].args.prompt, 'string');
+  }
+  const f = fixture();
+  const query = args => ({ ...f.query(args), supportedModels: async () => [] });
+  await assert.rejects(new ClaudeTextProvider({ workingDirectory, query }).open({}), { code: 'catalog_invalid' });
+}));
+test("Claude generation reports insufficient credit as a sanitized availability failure", () => inDirectory(async (workingDirectory) => {
+  const { query } = fixture([{ type: 'result', subtype: 'error_during_execution', errors: ['credit balance is too low private-secret'] }]);
+  const connection = await new ClaudeTextProvider({ workingDirectory, query }).open({});
+  await assert.rejects(connection.generate({ model: { id: 'default' }, prompt: 'test', schema }), error => error.code === 'rate_limit' && !error.message.includes('private-secret'));
+  connection.close();
+}));
 test("Claude generation disables tools, hooks and persistence, and returns structured JSON", () => inDirectory(async (workingDirectory) => {
   const { query, calls } = fixture();
   const connection = await new ClaudeTextProvider({ workingDirectory, query }).open({});

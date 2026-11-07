@@ -24,6 +24,10 @@ function loadAiSettings() {
         ? "AI 设置组件未能加载，请退出并重新启动 Agent Pet。其他设置可正常使用。"
         : "当前运行程序尚未提供 AI 连接接口，请退出并重新启动 Agent Pet。其他设置可正常使用。";
       status.dataset.state = "error";
+      const indicator = root.querySelector("#ai-status-indicator");
+      indicator.dataset.state = "error";
+      indicator.setAttribute("aria-label", status.textContent);
+      indicator.title = status.textContent;
       for (const control of root.querySelectorAll("input, select, button")) control.disabled = true;
     }
   })().finally(() => { aiSettingsLoading = null; });
@@ -47,6 +51,9 @@ const notebookPathButton = document.querySelector("#notebook-path");
 const notebookLocationStatus = document.querySelector("#notebook-location-status");
 const agentProviderList = document.querySelector("#agent-provider-list");
 const agentProviderStatus = document.querySelector("#agent-provider-status");
+let agentConnectionState = null;
+let agentDetailId = null;
+let agentOverviewScroll = 0;
 const navigationItems = [...document.querySelectorAll(".nav-item[data-page]")];
 const settingsPages = [...document.querySelectorAll("[data-settings-page]")];
 const voiceSelect = document.querySelector('[data-path="notifications.voice.voiceId"]');
@@ -185,7 +192,7 @@ const petLibraryController = new PetLibraryController({
 });
 
 function showPage(page) {
-  const selectedItem = navigationItems.find((item) => item.dataset.page === page);
+  const selectedItem = navigationItems.find((item) => item.dataset.page === (page === 'agent-detail' ? 'ai' : page));
   if (!selectedItem) return;
   for (const item of navigationItems) {
     item.setAttribute("aria-selected", String(item === selectedItem));
@@ -196,6 +203,119 @@ function showPage(page) {
     section.hidden = section.dataset.settingsPage !== page;
   }
   window.scrollTo({ top: 0, behavior: "instant" });
+  if (page !== 'agent-detail') agentDetailId = null;
+}
+
+function showAgentDetails(id) {
+  if (!agentConnectionState?.providers.some(provider => provider.id === id)) return;
+  agentOverviewScroll = window.scrollY;
+  agentDetailId = id;
+  showPage('agent-detail');
+  renderAgentDetails();
+  document.getElementById('agent-detail-title').focus({ preventScroll: true });
+  if (id === 'claude') void refreshClaudeStatus();
+}
+
+document.getElementById('agent-detail-back').addEventListener('click', () => {
+  const id = agentDetailId;
+  showPage('ai');
+  window.scrollTo({ top: agentOverviewScroll, behavior: 'instant' });
+  document.querySelector(`[data-provider-settings="${id}"]`)?.focus({ preventScroll: true });
+});
+
+const agentStateLabels = { disconnected: '未连接', checking: '检查本机环境…', downloading: '正在下载组件…',
+  installing: '正在安装组件…', connected: '已连接', disconnecting: '正在断开…', error: '连接失败' };
+
+function createAgentStatusTags(provider) {
+  const row = document.createElement('span');
+  row.className = 'agent-status-tags';
+  const status = document.createElement('span');
+  status.className = 'agent-provider-state';
+  status.textContent = provider.state === 'disconnected' && provider.components === 'missing'
+    ? '未下载' : agentStateLabels[provider.state] || '未连接';
+  status.dataset.state = provider.state;
+  row.append(status);
+  if (provider.state === 'connected') {
+    const availability = provider.availability || { state: 'unchecked' };
+    const tag = document.createElement('button');
+    tag.type = 'button';
+    tag.className = 'agent-provider-state agent-availability';
+    tag.dataset.availability = availability.state;
+    tag.textContent = { available: '可用', unavailable: '不可用', checking: '检查中…', unchecked: '待检查' }[availability.state] || '待检查';
+    tag.title = `${availability.message || '尚未检查登录和模型。'} 点击重新检查。`;
+    tag.setAttribute('aria-label', `${provider.displayName} ${tag.textContent}，${tag.title}`);
+    tag.disabled = availability.state === 'checking';
+    tag.addEventListener('click', async () => {
+      tag.disabled = true;
+      try { await window.companion.verifyAgent(provider.id); }
+      catch { agentProviderStatus.textContent = '检查未完成，请重试。'; tag.disabled = false; }
+    });
+    row.append(tag);
+  }
+  return row;
+}
+
+function createAgentAction(provider) {
+  const action = document.createElement('button');
+  action.type = 'button';
+  action.className = 'secondary-button agent-connection-action';
+  const busy = ['checking', 'downloading', 'installing'].includes(provider.state);
+  action.textContent = busy ? '取消' : provider.state === 'connected' ? '断开'
+    : provider.components === 'missing' ? (provider.state === 'error' ? '重试下载' : '下载')
+    : provider.state === 'error' ? '重试连接' : '连接';
+  action.disabled = provider.state === 'disconnecting';
+  action.setAttribute('aria-label', `${action.textContent} ${provider.displayName}`);
+  action.addEventListener('click', async () => {
+    action.disabled = true;
+    try {
+      await window.companion[busy || provider.state === 'connected' ? 'disconnectAgent' : 'connectAgent'](provider.id);
+      render(await window.companion.getSettings());
+      if (agentDetailId === 'claude') void refreshClaudeStatus();
+    } catch (error) {
+      (agentDetailId ? document.getElementById('agent-detail-message') : agentProviderStatus).textContent = error.message;
+      action.disabled = false;
+    }
+  });
+  return action;
+}
+
+function agentProgressText(provider) {
+  return provider.message || (provider.state === 'connected' && provider.availability?.state === 'unavailable' ? provider.availability.message : '') || (provider.state === 'downloading'
+    ? `已下载 ${formatFileSize(provider.received || 0)}${provider.total ? ` / ${formatFileSize(provider.total)}` : ''}` : '');
+}
+
+function createAgentIcon(provider) {
+  const icon = document.createElement('span');
+  icon.className = 'agent-provider-icon';
+  icon.setAttribute('aria-hidden', 'true');
+  if (provider.iconUrl) {
+    const image = document.createElement('img');
+    image.src = provider.iconUrl;
+    image.alt = '';
+    icon.append(image);
+  } else {
+    icon.classList.add('is-fallback');
+    icon.textContent = provider.badge || provider.displayName.slice(0, 1).toUpperCase();
+  }
+  return icon;
+}
+
+function renderAgentDetails() {
+  if (!agentDetailId) return;
+  const provider = agentConnectionState?.providers.find(item => item.id === agentDetailId);
+  if (!provider) return;
+  document.getElementById('agent-detail-title').textContent = provider.displayName;
+  for (const panel of document.querySelectorAll('[data-agent-options]')) panel.hidden = panel.dataset.agentOptions !== provider.id;
+  const copy = document.createElement('div');
+  copy.className = 'agent-provider-copy';
+  const name = document.createElement('strong');
+  name.textContent = provider.displayName;
+  copy.append(name, createAgentStatusTags(provider));
+  document.getElementById('agent-detail-help').textContent = provider.state === 'connected'
+    ? '断开会停止该来源的采集和新请求，已发出的请求会继续完成。'
+    : '连接时优先使用本机环境，缺少的组件会自动下载。';
+  document.getElementById('agent-detail-connection').replaceChildren(createAgentIcon(provider), copy, createAgentAction(provider));
+  document.getElementById('agent-detail-message').textContent = agentProgressText(provider);
 }
 
 function setPetLibraryStatus(state, message) {
@@ -245,10 +365,11 @@ function render(state) {
   renderAgentProviders(state.agentProviders);
   for (const control of document.querySelectorAll("[data-claude-setting]")) {
     const key = control.dataset.claudeSetting;
-    const value = key === "defaultProviderId" ? state.preferences.remoteControl.defaultProviderId : state.preferences.claude?.[key];
+    const value = state.preferences.claude?.[key];
     if (control.type === "checkbox") control.checked = Boolean(value);
     else control.value = value || "";
   }
+  document.querySelector('[data-agent-setting="defaultProviderId"]').value = state.preferences.remoteControl.defaultProviderId;
   for (const control of controls) {
     if (voiceStyleDirty && voiceStyleControlSet.has(control)) continue;
     const value = valueAtPath(state.preferences, control.dataset.path);
@@ -266,11 +387,12 @@ function render(state) {
 }
 
 function renderAgentProviders(connectionState) {
+  agentConnectionState = connectionState;
   const providers = Array.isArray(connectionState?.providers) ? connectionState.providers : [];
   if (!providers.length) {
     const empty = document.createElement("div");
     empty.className = "agent-provider-placeholder";
-    empty.textContent = "正在等待自动采集来源。";
+    empty.textContent = "正在读取智能体连接。";
     agentProviderList.replaceChildren(empty);
     agentProviderStatus.textContent = "来源状态尚不可用。";
     return;
@@ -280,18 +402,7 @@ function renderAgentProviders(connectionState) {
     card.className = "agent-provider-card";
     card.dataset.providerId = provider.id;
 
-    const icon = document.createElement("span");
-    icon.className = "agent-provider-icon";
-    if (provider.iconUrl) {
-      const image = document.createElement("img");
-      image.src = provider.iconUrl;
-      image.alt = "";
-      image.setAttribute("aria-hidden", "true");
-      icon.append(image);
-    } else {
-      icon.classList.add("is-fallback");
-      icon.textContent = provider.badge || provider.displayName.slice(0, 1).toUpperCase();
-    }
+    const icon = createAgentIcon(provider);
     const copy = document.createElement("span");
     copy.className = "agent-provider-copy";
     const name = document.createElement("strong");
@@ -299,16 +410,34 @@ function renderAgentProviders(connectionState) {
     const description = document.createElement("small");
     description.textContent = provider.description || "只读发现本地会话并采集任务状态。";
     copy.append(name, description);
-    const status = document.createElement("span");
-    status.className = "agent-provider-state";
-    status.textContent = "自动采集";
-    card.append(icon, copy, status);
+    const status = createAgentStatusTags(provider);
+    const detail = document.createElement('small');
+    detail.className = 'agent-connection-detail';
+    detail.textContent = agentProgressText(provider);
+    copy.append(status, detail);
+    const actions = document.createElement('div');
+    actions.className = 'agent-provider-actions';
+    const settings = document.createElement('button');
+    settings.type = 'button';
+    settings.className = 'agent-settings-link';
+    settings.dataset.providerSettings = provider.id;
+    settings.textContent = '设置 ›';
+    settings.setAttribute('aria-label', `${provider.displayName} 设置`);
+    settings.addEventListener('click', () => showAgentDetails(provider.id));
+    actions.append(createAgentAction(provider), settings);
+    card.append(icon, copy, actions);
     return card;
   });
   agentProviderList.replaceChildren(...cards);
   agentProviderStatus.dataset.state = "";
-  agentProviderStatus.textContent = "两个来源同时自动采集，无需切换；尚无会话时等待发现。自动采集不代表已验证登录，额度缺失仅影响对应来源。";
+  agentProviderStatus.textContent = '已连接表示已启用；可用性单独检查登录与模型。点击可用性标签可重新检查，实际额度以调用结果为准。';
+  const defaultSelect = document.querySelector('[data-agent-setting="defaultProviderId"]');
+  for (const option of defaultSelect.options) option.disabled = !providers.some(provider => provider.id === option.value && provider.state === 'connected');
+  defaultSelect.disabled = !providers.some(provider => provider.state === 'connected');
+  document.getElementById('claude-install').disabled = !providers.some(provider => provider.id === 'claude' && provider.state === 'connected');
+  renderAgentDetails();
 }
+window.companion?.onAgentConnectionsChanged?.(state => renderAgentProviders(state));
 
 async function loadStorageLocations() {
   notificationHistoryLocationStatus.textContent = "";
@@ -1528,14 +1657,33 @@ setInterval(() => {
 }, 15_000);
 
 const claudeStatus = document.getElementById("claude-status");
+function setClaudeFeedback(message, state = '') {
+  claudeStatus.textContent = message;
+  claudeStatus.dataset.state = state;
+}
+
+function setClaudeDetailState(id, label, state = '') {
+  const element = document.getElementById(id);
+  element.textContent = label;
+  element.dataset.state = state;
+}
+
 async function refreshClaudeStatus() {
   try {
     const { integration, runtime, lifecycle } = await window.companion.getClaudeStatus();
     const states = { installed: "已安装", "not-installed": "未安装", modified: "管理项已被修改", conflict: "存在冲突", error: "读取失败" };
-    const diagnostics = integration.message || integration.warnings?.length ? "存在诊断提示，请手动预览安装项检查。" : "";
-    const lifecycleStates = { installed: "已配置（已有会话需重载）", "legacy-installed": "复用已有接入", disabled: "已关闭或被客户端策略禁用", "not-detected": "等待发现 Claude 配置", "runtime-unavailable": "未发现 Node.js 20+", "not-installed": "未配置", pending: "等待检查", conflict: "配置冲突，未覆盖", modified: "管理项已修改，未覆盖", error: "配置失败" };
-    claudeStatus.textContent = `自动完成上报：${lifecycleStates[lifecycle?.state] || "待检查"}；可选增强：${states[integration.state] || "状态未知"}；运行时：${runtime.available ? "已发现" : "未发现"}；认证未验证。配置成功不代表当前会话已加载 Hook。${diagnostics}`;
-  } catch { claudeStatus.textContent = "读取可选增强状态失败，请稍后刷新；不代表自动发现已停止。"; }
+    const diagnostics = integration.message || integration.warnings?.length ? "存在诊断提示，请预览安装项检查。" : "";
+    const lifecycleStates = { disconnected: "未连接，不自动上报", installed: "已配置（已有会话需重载）", "legacy-installed": "复用已有接入", disabled: "已关闭或被客户端策略禁用", "not-detected": "等待发现 Claude 配置", "runtime-unavailable": "未发现 Node.js 20+", "not-installed": "未配置", pending: "等待检查", conflict: "配置冲突，未覆盖", modified: "管理项已修改，未覆盖", error: "配置失败" };
+    const tone = state => ['installed', 'legacy-installed'].includes(state) ? 'success'
+      : ['conflict', 'modified', 'error', 'runtime-unavailable'].includes(state) ? 'error' : '';
+    setClaudeDetailState('claude-lifecycle-state', lifecycleStates[lifecycle?.state] || '待检查', tone(lifecycle?.state));
+    setClaudeDetailState('claude-integration-state', states[integration.state] || '状态未知', tone(integration.state));
+    setClaudeDetailState('claude-runtime-state', runtime.available ? '已发现' : '未发现', runtime.available ? 'success' : '');
+    setClaudeFeedback(diagnostics);
+  } catch {
+    for (const id of ['claude-lifecycle-state', 'claude-integration-state', 'claude-runtime-state']) setClaudeDetailState(id, '读取失败', 'error');
+    setClaudeFeedback('读取接入状态失败，请稍后刷新；不代表自动发现已停止。', 'error');
+  }
 }
 for (const control of document.querySelectorAll("[data-claude-setting]")) {
   control.addEventListener("change", () => {
@@ -1545,7 +1693,7 @@ for (const control of document.querySelectorAll("[data-claude-setting]")) {
       await window.companion.updateClaudeSettings(patch);
       render(await window.companion.getSettings());
       await refreshClaudeStatus();
-      setStatus("saved", "已保存；自动上报状态见下方，MCP / 状态栏仍需确认安装");
+      setStatus("saved", "已保存");
     }).catch(error => { setStatus("error", `保存失败：${error.message}`); });
   });
 }
@@ -1562,17 +1710,28 @@ for (const action of ["preview", "install", "remove"]) {
         output.hidden = false;
         output.textContent = JSON.stringify(result.preview || result, null, 2);
       }
-      if (result.cancelled) claudeStatus.textContent = "已取消，未修改接入配置。";
-      else if (!result.ok) claudeStatus.textContent = result.message || "接入操作未完成，请检查配置与备份。";
+      if (result.cancelled) setClaudeFeedback("已取消，未修改接入配置。");
+      else if (!result.ok) setClaudeFeedback(result.message || "接入操作未完成，请检查配置与备份。", 'error');
       else if (action !== "preview") {
         await refreshClaudeStatus();
-        claudeStatus.textContent += " 操作完成，请重启 Claude CLI / 重新加载 VS Code。";
+        setClaudeFeedback(`${claudeStatus.textContent} 操作完成，请重启 Claude CLI / 重新加载 VS Code。`.trim(), 'success');
       }
-    } catch (error) { claudeStatus.textContent = `接入操作失败：${error.message}`; }
+    } catch (error) { setClaudeFeedback(`接入操作失败：${error.message}`, 'error'); }
     finally { button.disabled = false; }
   });
 }
-void refreshClaudeStatus();
+document.querySelector('[data-agent-setting="defaultProviderId"]').addEventListener('change', event => {
+  const id = event.currentTarget.value;
+  setStatus('saving', '正在保存…');
+  saveQueue = saveQueue.then(async () => {
+    render(await window.companion.setDefaultAgent(id));
+    setStatus('saved', '已保存');
+  }).catch(error => setStatus('error', `保存失败：${error.message}`));
+});
+document.getElementById('remote-agent-connections').addEventListener('click', () => {
+  showPage('ai');
+  document.querySelector('.nav-item[data-page="ai"]').focus();
+});
 
 for (const item of navigationItems) {
   item.addEventListener("click", () => showPage(item.dataset.page));

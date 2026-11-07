@@ -527,6 +527,7 @@ export class RemoteControlController {
       "/S0001 状态",
       "/S0001 停止",
       "/S0001 重试 · 恢复超时或中断的上一条请求",
+      "提交任务前，请在电脑端“智能体与 AI”中连接对应智能体；可同时连接多个。",
     ].join("\n"), inbound, { kind: "catalog.help" });
     return { ok: true, action: "help" };
   }

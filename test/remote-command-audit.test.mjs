@@ -6,6 +6,7 @@ import path from "node:path";
 import { RemoteTaskRegistry } from "../desktop/remote-task-registry.mjs";
 import { RemoteControlController } from "../desktop/remote-control-controller.mjs";
 import { parseRemoteCommand } from "../desktop/remote-command-parser.mjs";
+import { RemoteExecutorRouter } from '../desktop/agents/remote-executor-router.mjs';
 
 async function waitFor(predicate) {
   const deadline = Date.now() + 2_000;
@@ -87,6 +88,23 @@ const documentedCommands = [
   ["/S0001 停止", "stop"],
   ["/S0001 重试", "retry"],
 ];
+
+test('disconnected source reaches the real queue and final feedback without executing or changing old IDs', async t => {
+  const f = await fixture(t, { status: 'interrupted' });
+  const original = f.controller.executor;
+  f.controller.executor = new RemoteExecutorRouter({ codex: original, isConnected: () => false });
+  await f.send('/help');
+  assert.match(f.replies.at(-1), /连接对应智能体/);
+  for (const command of ['/S0001 请继续检查', '/P001 新任务：检查构建结果', '/S0002 重试']) {
+    if (command.includes('重试')) await f.registry.observeSession({ ...f.registry.resolveSession('S0002'), status: { state: 'interrupted' } });
+    const before = f.replies.length;
+    const result = await f.send(command);
+    assert.equal(result.queued, true);
+    await waitFor(() => f.replies.slice(before).some(reply => reply.includes('请先在“智能体与 AI”中连接')));
+  }
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.registry.resolveSession('S0001').sessionId, 'audit-session-1');
+});
 
 test("every command advertised in the guide has an execution check", async () => {
   const guide = await readFile(new URL("../docs/WEIXIN_REMOTE_CONTROL.md", import.meta.url), "utf8");

@@ -15,7 +15,7 @@ test("packaging unpacks external bridges and Windows SDK binaries at root or nes
     "node_modules/@openai/codex-win32-x64/vendor/codex.exe"]) {
     assert.ok(pkg.build.asarUnpack.some(pattern => minimatch(file, pattern)), `external runtime resource: ${file}`);
   }
-  assert.equal(pkg.dependencies["@anthropic-ai/claude-agent-sdk"], "0.3.318");
+  assert.equal(pkg.dependencies["@anthropic-ai/claude-agent-sdk"], undefined);
 });
 
 const settings = () => import("../desktop/agents/claude-settings.mjs");

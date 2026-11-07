@@ -21,7 +21,7 @@ test("agent provider registry keeps its legacy selection API without selecting a
   assert.equal(registry.current().id, "codex");
   assert.equal(registry.current().iconUrl, "/assets/agents/codex.svg");
   const before = registry.snapshot().providers;
-  assert.deepEqual(before.map(item => [item.id, item.state]), [["codex", "auto"], ["deepseek", "auto"]]);
+  assert.deepEqual(before.map(item => [item.id, item.state]), [["codex", "disconnected"], ["deepseek", "disconnected"]]);
   assert.ok(before.every(item => !Object.hasOwn(item, "selected")));
   registry.setActiveProvider("deepseek");
   assert.equal(registry.current().usageProviderId, "deepseek");

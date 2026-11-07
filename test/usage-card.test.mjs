@@ -63,41 +63,51 @@ test("usage card retains both identities and retry controls when the whole IPC r
   assert.equal(h.root.attributes["aria-busy"], "false");
 });
 
-test("settings source cards are noninteractive automatic discovery status, including legacy snapshots", async () => {
+test("settings cards independently connect, disconnect, cancel and retry without changing defaults", async () => {
   const source = await read("public/settings.js");
   const start = source.indexOf("function renderAgentProviders(");
-  const end = source.indexOf("\nasync function loadStorageLocations", start);
-  const list = element("div"), status = element("p");
-  const context = { document: { createElement: element }, agentProviderList: list, agentProviderStatus: status };
-  vm.runInNewContext(source.slice(start, end), context);
-  context.renderAgentProviders({ activeProviderId: "claude", providers: [
-    { id: "codex", displayName: "Codex", selected: false, state: "auto" },
-    { id: "claude", displayName: "Claude Code", selected: true, state: "unverified" },
-  ] });
-  assert.equal(list.children.length, 2);
-  for (const card of list.children) {
-    assert.notEqual(card.tag, "button");
-    assert.equal(card.attributes["aria-pressed"], undefined);
-    assert.match(text(card), /自动采集/);
+  const end = source.indexOf("\nwindow.companion?.onAgentConnectionsChanged", start);
+  const list = element("div"), status = element("p"), select = { options: [{ value: 'codex' }, { value: 'claude' }] };
+  const calls = [], install = element('button');
+  const context = { document: { createElement: element, querySelector: () => select, getElementById: () => install },
+    agentProviderList: list, agentProviderStatus: status, formatFileSize: value => value + ' bytes',
+    agentDetailId: null, agentConnectionState: null, showAgentDetails() {}, render() {}, refreshClaudeStatus() {}, window: { companion: {
+      connectAgent: async id => calls.push(['connect', id]), disconnectAgent: async id => calls.push(['disconnect', id]), getSettings: async () => ({})
+    } } };
+  vm.runInNewContext(source.slice(source.indexOf("const agentStateLabels"), source.indexOf("function setPetLibraryStatus")) + source.slice(start, end), context);
+  for (const state of ['disconnected', 'connected', 'downloading', 'error']) {
+    context.renderAgentProviders({ providers: [
+      { id: 'codex', displayName: 'Codex', state: 'connected' },
+      { id: 'claude', displayName: 'Claude Code', state, received: 200, total: 1000 },
+    ] });
+    assert.equal(list.children.length, 2);
+    const button = list.children[1].children[2].children[0];
+    assert.equal(button.tag, 'button');
+    assert.equal(select.options[0].disabled, false);
+    assert.equal(select.options[1].disabled, state !== 'connected');
+    await button.listeners.click();
   }
-  assert.doesNotMatch(text(list) + text(status), /已选择|已连接|已登录|请选择/);
-  assert.doesNotMatch(source, /selectAgentProvider|agentProviderList\.addEventListener/);
+  assert.deepEqual(calls, [['connect', 'claude'], ['disconnect', 'claude'], ['disconnect', 'claude'], ['connect', 'claude']]);
 });
 
 test("Claude optional integration status does not disclose runtime or configuration paths", async () => {
   const source = await read("public/settings.js");
-  const start = source.indexOf("async function refreshClaudeStatus()");
+  const start = source.indexOf("function setClaudeFeedback(");
   const end = source.indexOf("\nfor (const control", start);
   const status = element("p");
-  const context = { claudeStatus: status, window: { companion: { async getClaudeStatus() {
+  const rows = new Map(['claude-lifecycle-state', 'claude-integration-state', 'claude-runtime-state'].map(id => [id, element('span')]));
+  const context = { claudeStatus: status, document: { getElementById: id => rows.get(id) }, window: { companion: { async getClaudeStatus() {
     return { integration: { state: "not-installed", message: "C:/private/config.json", warnings: ["private/location"] },
       runtime: { available: true, executablePath: "C:/private/claude.exe", configDirectory: "C:/private" } };
   } } } };
   vm.runInNewContext(source.slice(start, end), context);
   await context.refreshClaudeStatus();
-  assert.doesNotMatch(status.textContent, /private|\.exe|config\.json/);
-  assert.match(status.textContent, /可选增强/);
-  assert.match(status.textContent, /认证未验证/);
+  const visibleText = [status, ...rows.values()].map(item => item.textContent).join(' ');
+  assert.doesNotMatch(visibleText, /private|\.exe|config\.json/);
+  assert.equal(rows.get('claude-integration-state').textContent, '未安装');
+  assert.equal(rows.get('claude-runtime-state').textContent, '已发现');
+  assert.match(status.textContent, /诊断提示/);
+  assert.match(await read('public/settings.html'), /接入状态仅反映本地配置，不验证账号认证/);
 });
 
 test("desktop exposes dual usage IPC with the same trust checks and keeps the old endpoint", async () => {
