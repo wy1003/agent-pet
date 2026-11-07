@@ -17,7 +17,7 @@ Agent Pet 是一款 Windows 桌面宠物助手。宠物显示 Codex 与 Claude C
 
 <table>
   <tr>
-    <td align="center"><img src="public/assets/pets/builtin-default/builtin-default-running.gif" width="112" alt="宠物工作动画"><br><b>Codex 正在工作</b></td>
+    <td align="center"><img src="public/assets/pets/builtin-default/builtin-default-running.gif" width="112" alt="宠物工作动画"><br><b>正在工作</b></td>
     <td align="center"><img src="public/assets/pets/builtin-default/builtin-default-review.gif" width="112" alt="宠物等待确认动画"><br><b>等你确认</b></td>
     <td align="center"><img src="public/assets/pets/builtin-default/builtin-default-waving.gif" width="112" alt="宠物完成任务动画"><br><b>任务完成啦</b></td>
   </tr>
@@ -25,7 +25,7 @@ Agent Pet 是一款 Windows 桌面宠物助手。宠物显示 Codex 与 Claude C
 
 ## 它能帮你做什么
 
-- **不用一直盯着 Codex**：桌宠显示任务状态，点击即可查看多个项目的任务。
+- **不用一直盯着 Codex / Claude code**：桌宠显示任务状态，点击即可查看多个项目的任务。
 - **把计划和灵感留在桌面**：记事板独立悬浮，支持详细事项、重要标记、可选截止日期与时间，以及完成记录和手动归档。
 - **让 AI 帮你记录**：通过 MCP 查询、添加和修改计划或灵感，保留原话与修改历史；自己也能随时新增和编辑。
 - **做完了叫你一声**：支持桌面通知、语音播报和微信提醒。
@@ -40,18 +40,6 @@ Agent Pet 是一款 Windows 桌面宠物助手。宠物显示 Codex 与 Claude C
 2. 打开 Codex / Claude Code 和 Agent Pet，桌宠会同时自动跟踪两种来源的本机会话，无需二选一。
 3. 点击宠物查看任务；右键宠物或使用系统托盘进入设置、打开记事板或查看今日工作总结。
 4. 在设置中开启需要的窗口与通知。使用记事板、AI 写入和微信续问的方法见下文。
-
-### Codex 与 Claude 同时自动发现
-
-启动桌宠即同时读取两种来源的本地会话日志，无需选择“当前智能体”。Claude 默认读取 `~/.claude/projects`，尊重启动 Agent Pet 时的 `CLAUDE_CONFIG_DIR`。两边任务一起显示并标注来源；CLI / VS Code 必须在该配置根写入主会话日志。首次发现最近 24 小时的轮次，后续增量跟踪。
-
-桌宠默认自动发现 Node.js 20+，在已有 Claude 配置目录内备份并维护本应用的最小生命周期 Hook，不需要点击安装或填写路径。仅明确 `Stop` 或日志 `end_turn` 确认完成；缺少终态的文字回复等待确认，不先弹问号通知，不靠静默猜测成功。首次配置后请新开 Claude 会话或重载扩展；磁盘配置成功不代表已有会话已加载。缺少 Node、配置冲突或 Hook 被策略禁用时明确降级，只读发现继续，不修改原日志。
-
-后台代理和命令仍在运行时，前台结束回复继续显示工作中；观察到后台任务结束并收到新的主代理结束证据后才确认完成。子任务回报与代理消息归入原用户任务，不单独发送完成通知。
-
-额度窗口同时展示 Codex 与 Claude，单侧失败不影响另一侧；没有可靠配额就显示不可用/过期，不推算余额。“默认新建代理”仅决定无所属会话的新任务使用谁，不是任务采集开关；既有会话按来源续问，AI 文本服务和模型保持独立。Claude SDK 恢复 **不等于原窗口注入**，受控工具边界也不等于 OS 沙箱。
-
-自动上报不修改登录、模型、权限，也不自动安装 MCP 或状态栏；可在设置中关闭，只移除仍匹配记录的自有项。只需要记事板时，可在 **设置 → 记事板 → AI 写入** 一键连接 Claude Code，不附带安装 Hook 或状态栏。状态栏额度与额外事件等完整增强仍从 **设置 → 智能体与 AI → 可选增强与高级设置** 显式确认安装。自动上报与可选增强不会重复注册生命周期 Hook；显式建立的独立记事板连接在移除完整增强后仍保留。用户改写的配置拒绝覆盖。[完整权限与恢复说明](docs/USAGE.md#claude-code-接入与恢复)
 
 ### 计划与灵感
 
