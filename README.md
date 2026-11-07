@@ -1,8 +1,3 @@
----
-output:
-  word_document:
-    reference_doc: C:/Users/ASJ/custom-reference.docx
----
 
 # Agent Pet
 
