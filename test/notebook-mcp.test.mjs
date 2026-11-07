@@ -22,6 +22,50 @@ async function fixture(t) {
   return { root, store, tools, bridge, connectionFile, notifications: () => notifications };
 }
 
+test("Claude notebook-only installed config and another MCP client share the single writer", async t => {
+  const f = await fixture(t);
+  const configDir = path.join(f.root, "claude");
+  await fs.mkdir(configDir);
+  const entry = {
+    command: process.execPath,
+    args: [fileURLToPath(new URL("../desktop/notebook/mcp/stdio.mjs", import.meta.url)), "--connection", f.connectionFile],
+    env: { ELECTRON_RUN_AS_NODE: "1" },
+  };
+  const { installClaudeNotebook } = await import("../desktop/claude/integration.mjs");
+  assert.equal(typeof installClaudeNotebook, "function");
+  const installed = await installClaudeNotebook({ configDir, notebookMcpConfig: entry });
+  assert.equal(installed.ok, true);
+  assert.equal(installed.configured, true);
+  const config = JSON.parse(await fs.readFile(path.join(configDir, ".claude.json"), "utf8"));
+  assert.deepEqual(Object.keys(config.mcpServers), ["agent-pet-notebook"]);
+  assert.deepEqual(config.mcpServers["agent-pet-notebook"], entry);
+  const clients = [];
+  try {
+    for (const [name, settings] of [["claude-notebook-fixture", config.mcpServers["agent-pet-notebook"]], ["second-notebook-fixture", entry]]) {
+      const client = new Client({ name, version: "1" });
+      clients.push(client);
+      await client.connect(new StdioClientTransport({ ...settings, stderr: "ignore" }));
+      assert.equal((await client.listTools()).tools.length, 6);
+    }
+    const args = { requestId: "shared-notebook-plan", title: "双来源共用计划", detail: "来自隔离 MCP 客户端" };
+    const first = await clients[0].callTool({ name: "notebook_add_plan", arguments: args });
+    assert.equal(first.structuredContent.saved, true);
+    const record = first.structuredContent.record;
+    const duplicate = await clients[1].callTool({ name: "notebook_add_plan", arguments: args });
+    assert.equal(duplicate.structuredContent.record.id, record.id);
+    const records = await clients[1].callTool({ name: "notebook_list", arguments: { kind: "plan", query: "双来源共用计划" } });
+    assert.equal(records.structuredContent.records.length, 1);
+    await f.store.execute({ type: "edit-plan", id: record.id, revision: record.revision, value: { title: "手动修改后的计划", detail: record.detail, deadline: "", deadlineTime: "" } });
+    const current = await clients[0].callTool({ name: "notebook_get", arguments: { kind: "plan", id: record.id } });
+    assert.equal(current.structuredContent.title, "手动修改后的计划");
+    const stale = await clients[0].callTool({ name: "notebook_update_plan", arguments: { id: record.id, revision: record.revision, changes: { title: "不应覆盖手动修改" } } });
+    assert.equal(stale.isError, true);
+    await assert.rejects(fs.stat(path.join(configDir, "settings.json")), { code: "ENOENT" });
+  } finally {
+    await Promise.all(clients.map(client => client.close()));
+  }
+});
+
 test("real MCP stdio discovery and tool calls use the app's single writer, preserve original text and return saved records", async t => {
   const f = await fixture(t);
   const client = new Client({ name: "notebook-test", version: "1" });

@@ -17,8 +17,9 @@ const archive = path.join(built, "resources", "app.asar");
 const unpacked = `${archive}.unpacked`;
 const sourcePackage = JSON.parse(await readFile(path.join(source, "package.json"), "utf8"));
 const packagedPackage = JSON.parse(extractFile(archive, "package.json").toString("utf8"));
+assert.ok(extractFile(archive, path.normalize("src/claude-input.mjs")).equals(await readFile(path.join(source, "src/claude-input.mjs"))), "stale packaged Claude input classifier");
 for (const field of ["name", "version", "main", "type"]) assert.equal(packagedPackage[field], sourcePackage[field]);
-for (const relative of ["desktop/main.mjs", "desktop/preferences.mjs", "desktop/agents/desktop-runtime.mjs", "desktop/agents/claude-lifecycle.mjs", "desktop/agents/claude-settings.mjs", "desktop/claude/runtime.mjs", "desktop/claude/remote-executor.mjs", "desktop/claude/hook-bridge.mjs", "desktop/claude/statusline-bridge.mjs", "desktop/claude/integration.mjs", "desktop/notebook/mcp/stdio.mjs", "src/claude-collector.mjs", "src/claude-discovery.mjs", "src/claude-transcript.mjs", "src/multi-agent-collector.mjs", "public/usage-card.js", "public/settings.js"]) {
+for (const relative of ["desktop/main.mjs", "desktop/preferences.mjs", "desktop/agents/desktop-runtime.mjs", "desktop/agents/claude-lifecycle.mjs", "desktop/agents/claude-settings.mjs", "desktop/claude/runtime.mjs", "desktop/claude/remote-executor.mjs", "desktop/claude/hook-bridge.mjs", "desktop/claude/statusline-bridge.mjs", "desktop/claude/integration.mjs", "desktop/notebook/mcp/stdio.mjs", "desktop/notebook/mcp/claude-connection.mjs", "desktop/preload.cjs", "desktop/windows/window-contracts.mjs", "public/settings.html", "public/settings.css", "src/claude-collector.mjs", "src/claude-discovery.mjs", "src/claude-transcript.mjs", "src/multi-agent-collector.mjs", "public/usage-card.js", "public/settings.js"]) {
   assert.ok(extractFile(archive, path.normalize(relative)).equals(await readFile(path.join(source, relative))), `stale packaged file: ${relative}`);
 }
 assert.ok((await stat(path.join(unpacked, "node_modules", "@anthropic-ai", "claude-agent-sdk-win32-x64", "claude.exe"))).size > 0);
@@ -114,10 +115,56 @@ try {
   store = new NotebookStore(path.join(temporary, "notebook"));
   bridge = new NotebookMcpBridge({ connectionFile, tools: createNotebookTools(store) });
   await bridge.start();
-  client = new Client({ name: "package-smoke", version: "1" });
-  transport = new StdioClientTransport({ command: path.join(built, "Agent Pet.exe"),
+  const { NotebookClaudeConnection } = await load("desktop/notebook/mcp/claude-connection.mjs");
+  const notebookEntry = { command: path.join(built, "Agent Pet.exe"),
     args: [path.join(unpacked, "desktop", "notebook", "mcp", "stdio.mjs"), "--connection", connectionFile],
-    env: { ...env, ELECTRON_RUN_AS_NODE: "1" }, stderr: "pipe" });
+    env: { ELECTRON_RUN_AS_NODE: "1" } };
+  const notebookConnection = new NotebookClaudeConnection({
+    getConfig: () => ({ mcpServers: { "agent-pet-notebook": notebookEntry } }),
+    getOptions: () => ({ configDir }),
+  });
+  const settingsBeforeNotebook = await readFile(settingsFile, "utf8");
+  assert.equal((await notebookConnection.connect()).configured, true);
+  assert.equal((await notebookConnection.status()).configured, true);
+  assert.equal((await notebookConnection.connect()).changed, false);
+  assert.equal(await readFile(settingsFile, "utf8"), settingsBeforeNotebook);
+  const installedMcp = JSON.parse(await readFile(mcpFile, "utf8"));
+  assert.deepEqual(Object.keys(installedMcp.mcpServers).sort(), ["agent-pet-notebook", "existing"]);
+  const installedNotebook = installedMcp.mcpServers["agent-pet-notebook"];
+  assert.deepEqual(installedNotebook, notebookEntry);
+  const notebookManifestFile = path.join(configDir, "agent-pet-notebook.json");
+  const legacyManifest = JSON.parse(await readFile(notebookManifestFile, "utf8"));
+  delete legacyManifest.mcpName;
+  const legacyMcp = structuredClone(installedMcp);
+  legacyMcp.mcpServers["agent-pet"] = legacyMcp.mcpServers["agent-pet-notebook"];
+  delete legacyMcp.mcpServers["agent-pet-notebook"];
+  await writeFile(mcpFile, JSON.stringify(legacyMcp));
+  await writeFile(notebookManifestFile, JSON.stringify(legacyManifest));
+  const beforeLegacyStatus = await readFile(mcpFile, "utf8");
+  await notebookConnection.status();
+  assert.equal(await readFile(mcpFile, "utf8"), beforeLegacyStatus);
+  const migrated = await notebookConnection.connect();
+  assert.equal(migrated.configured, true);
+  assert.equal(migrated.changed, true);
+  assert.deepEqual(JSON.parse(await readFile(mcpFile, "utf8")), installedMcp);
+  assert.equal((await notebookConnection.connect()).changed, false);
+  const missingManagedMcp = structuredClone(installedMcp);
+  delete missingManagedMcp.mcpServers["agent-pet-notebook"];
+  await writeFile(mcpFile, JSON.stringify(missingManagedMcp));
+  const beforeMissingStatus = await readFile(mcpFile, "utf8");
+  const missingStatus = await notebookConnection.status();
+  assert.equal(missingStatus.configured, false);
+  assert.equal(await readFile(mcpFile, "utf8"), beforeMissingStatus);
+  const restored = await notebookConnection.connect();
+  assert.equal(restored.configured, true);
+  assert.equal(restored.changed, true);
+  assert.deepEqual(JSON.parse(await readFile(mcpFile, "utf8")), installedMcp);
+  assert.equal((await notebookConnection.connect()).changed, false);
+  assert.equal(await readFile(settingsFile, "utf8"), settingsBeforeNotebook);
+  console.log("Packaged notebook-only Claude connection uses agent-pet-notebook, safely migrates the owned legacy name, restores a missing managed entry, preserves Hooks and supports idempotent configuration.");
+  client = new Client({ name: "package-smoke", version: "1" });
+  transport = new StdioClientTransport({ ...installedNotebook,
+    env: { ...env, ...installedNotebook.env }, stderr: "pipe" });
   let mcpErrors = "";
   transport.stderr.on("data", data => { mcpErrors += data; });
   await client.connect(transport, { timeout: 10000 });

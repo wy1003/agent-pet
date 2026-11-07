@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { createHash } from "node:crypto";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
+import { backgroundToolUseId, claudeInputKind, finishedBackgroundTask } from "./claude-input.mjs";
 
 const READ_BYTES = 1024 * 1024, TEXT_BYTES = 64 * 1024, HISTORY_MS = 24 * 60 * 60 * 1000;
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -125,20 +126,35 @@ export class ClaudeTranscriptDiscovery {
     const cwd = typeof row.cwd === "string" ? row.cwd : "";
     const ignored = cwd && this.ignoredProjects.some(project => projectKey(cwd) === project || projectKey(cwd).startsWith(`${project}/`));
     if (ignored) { cursor.turn = null; return null; }
-    const content = textOf(row.message);
+    const queued = row.type === "attachment" && row.attachment?.type === "queued_command";
+    const content = textOf(queued ? { content: row.attachment.prompt } : row.message);
     const base = { session_id: sessionId, timestamp: new Date(timestamp).toISOString(), cwd,
       transcript_path: file, agent_pet_source: "transcript", event_id: `transcript:${sessionId}:${row.uuid}:${hash(JSON.stringify(row.message ?? null))}` };
     const blocks = row.message?.content;
     const toolResult = Array.isArray(blocks) && blocks.some(block => block?.type === "tool_result");
-    if (row.type === "user" && row.message?.role === "user" && content.trim() && !toolResult && !row.isMeta && !row.isCompactSummary) {
+    const inputKind = claudeInputKind(queued ? row.attachment : row, content);
+    if (row.type === "user" && row.message?.role === "user" && content.trim() && !toolResult && !row.isMeta && !row.isCompactSummary && inputKind === "human") {
       cursor.turn = { id: row.uuid, started: timestamp, ancestors: [row.uuid], eligible: timestamp >= stamp(this.now()) - HISTORY_MS };
       if (!cursor.turn.eligible) return null;
-      return { ...base, hook_event_name: "UserPromptSubmit", prompt_id: row.uuid, prompt: limited(content), prompt_hash: hash(content) };
+      return { ...base, hook_event_name: "UserPromptSubmit", prompt_id: row.uuid, prompt: limited(content), prompt_hash: hash(content), origin: { kind: "human" } };
     }
     const turn = cursor.turn;
-    if (!turn || !turn.eligible || timestamp < turn.started) return null;
+    if (!turn || !turn.eligible) return null;
     if (row.parentUuid && !turn.ancestors.includes(row.parentUuid)) return null;
     if (!turn.ancestors.includes(row.uuid)) turn.ancestors = [...turn.ancestors, row.uuid].slice(-256);
+    // Attachments are appended in chain order but can retain an earlier enqueue
+    // timestamp. Preserve their ancestry even when they predate the user row.
+    if (timestamp < turn.started) return null;
+    if ((row.type === "user" || queued) && inputKind === "continuation") return { ...base,
+      hook_event_name: queued ? "BackgroundTaskFinished" : "Continuation", prompt_id: turn.id,
+      background_task_id: finishedBackgroundTask(content), tool_use_id: backgroundToolUseId(content) };
+    const result = row.toolUseResult;
+    const backgroundId = result?.status === "async_launched" ? result.agentId
+      : result?.backgroundTaskId || (result?.success === true && (result.resumedAgentId || result.revivedAgentId));
+    if (toolResult && typeof backgroundId === "string" && ID.test(backgroundId)) return {
+      ...base, hook_event_name: "BackgroundTaskStarted", prompt_id: turn.id, background_task_id: backgroundId,
+      tool_use_id: blocks.find(block => block?.type === "tool_result")?.tool_use_id,
+    };
     if (row.type !== "assistant" || row.message?.role !== "assistant") return null;
     const toolUse = row.message.stop_reason === "tool_use" || (Array.isArray(blocks) && blocks.some(block => block?.type === "tool_use"));
     if (toolUse) return { ...base, hook_event_name: "PostToolUse", prompt_id: turn.id };

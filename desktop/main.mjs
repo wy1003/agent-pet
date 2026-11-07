@@ -46,6 +46,7 @@ import { createNotebookController } from "./notebook/notebook-controller.mjs";
 import { createNotebookTools } from "./notebook/mcp/notebook-tools.mjs";
 import { NotebookMcpBridge, notebookMcpConfig } from "./notebook/mcp/bridge-service.mjs";
 import { NotebookCodexConnection, installNotebookConnectionIpc } from "./notebook/mcp/codex-connection.mjs";
+import { NotebookClaudeConnection, installNotebookClaudeConnectionIpc } from "./notebook/mcp/claude-connection.mjs";
 import { RemoteNotificationQueue } from "./remote-notification-queue.mjs";
 import { RemoteChannelHub } from "./remote-channel-hub.mjs";
 import { RemoteTaskRegistry } from "./remote-task-registry.mjs";
@@ -1620,6 +1621,10 @@ function installIpcHandlers() {
   });
   const notebookCodexConnection = new NotebookCodexConnection({ getConfig: getNotebookMcpConfig, workingDirectory: app.getPath("userData") });
   installNotebookConnectionIpc({ ipcMain, requireSettingsMainFrame, getConnection: () => notebookCodexConnection });
+  const notebookClaudeConnection = new NotebookClaudeConnection({ getConfig: getNotebookMcpConfig });
+  installNotebookClaudeConnectionIpc({
+    ipcMain, requireSettingsMainFrame, getConnection: () => notebookClaudeConnection,
+  });
   installNotebookWindowIpc({ ipcMain, window: notebookWindow, controller: notebookWindows });
   const notebookController = createNotebookController({ getStore: () => notebookStore,
     ownsMainFrame: event => notebookWindow.ownsMainFrame(event) });

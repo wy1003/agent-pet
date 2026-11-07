@@ -35,7 +35,7 @@ test('custom config merges user MCP outside settings, preserves unknown fields, 
   assert.equal(preview.ok, true);
   assert.deepEqual(await json(path.join(o.configDir, 'settings.json')), original);
   assert.equal(preview.paths.mcp, path.join(o.configDir, '.claude.json'));
-  assert.equal(preview.preview.mcpServers['agent-pet'].command, process.execPath);
+  assert.equal(preview.preview.mcpServers['agent-pet-notebook'].command, process.execPath);
   const installed = await api.installClaudeIntegration(o);
   assert.equal(installed.ok, true, JSON.stringify(installed));
   assert.equal(installed.changed, true);
@@ -72,7 +72,7 @@ test('invalid JSON and malformed relevant fields are never reset', async t => {
 
 test('same-name MCP and unowned hook markers are conflicts, even identical MCP content', async t => {
   const o = await fixture(t);
-  await fs.writeFile(path.join(o.configDir, '.claude.json'), JSON.stringify({ mcpServers: { 'agent-pet': o.mcpConfig.mcpServers['agent-pet-notebook'] } }));
+  await fs.writeFile(path.join(o.configDir, '.claude.json'), JSON.stringify({ mcpServers: { 'agent-pet-notebook': o.mcpConfig.mcpServers['agent-pet-notebook'] } }));
   assert.equal((await api.installClaudeIntegration(o)).code, 'CONFLICT');
   await fs.writeFile(path.join(o.configDir, '.claude.json'), '{}');
   await fs.writeFile(path.join(o.configDir, 'settings.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'agent-pet:hook:v1 unowned' }] }] } }));
@@ -86,7 +86,7 @@ test('editing or removing an owned entry refuses reinstall and removal without t
     assert.equal(installed.ok, true);
     const file = target === 'mcp' ? installed.paths.mcp : installed.paths.settings;
     const current = await json(file);
-    if (target === 'mcp') current.mcpServers['agent-pet'].args.push('--user-edit');
+    if (target === 'mcp') current.mcpServers['agent-pet-notebook'].args.push('--user-edit');
     else if (target === 'missing') delete current.hooks.Stop;
     else current.hooks.Stop[0].hooks[0].timeout = 99;
     await fs.writeFile(file, JSON.stringify(current));
@@ -128,7 +128,7 @@ test('exec-form hooks preserve spaces, Chinese and quotes and never emit approva
   const result = await api.previewClaudeIntegration(o);
   assert.equal(result.ok, true);
   const hook = result.preview.hooks.PermissionRequest[0].hooks[0];
-  const child = spawnSync(hook.command, hook.args, { input: '{}', encoding: 'utf8', env: { SystemRoot: process.env.SystemRoot, PATH: process.env.PATH, HOME: o.root, USERPROFILE: o.root } });
+  const child = spawnSync(hook.command, hook.args, { input: '{}', encoding: 'utf8', timeout: 10000, windowsHide: true, env: { SystemRoot: process.env.SystemRoot, PATH: process.env.PATH, HOME: o.root, USERPROFILE: o.root } });
   assert.equal(child.status, 0, child.stderr);
   assert.equal(child.stdout, '');
   assert.deepEqual(await json(argsPath), ['--events-dir', o.eventsDir]);

@@ -9,6 +9,8 @@ import { isDeepStrictEqual as equal } from 'node:util';
 // Hook exec form avoids shell-default differences (Git Bash / PowerShell).
 // https://code.claude.com/docs/en/hooks#exec-form-and-shell-form
 const MARKER = 'agent-pet:hook:v1';
+const MCP_NAME = 'agent-pet-notebook';
+const LEGACY_MCP_NAME = 'agent-pet';
 const LIFECYCLE_MARKER = 'agent-pet:lifecycle:v1';
 const LIFECYCLE_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop', 'StopFailure', 'SessionEnd'];
 const EVENTS = ['SessionStart', 'UserPromptSubmit', 'PermissionRequest', 'Notification', 'PostToolUse', 'Stop', 'StopFailure', 'SessionEnd'];
@@ -34,7 +36,7 @@ function locations(options) {
   return { configDir, settings: path.join(configDir, 'settings.json'),
     mcp: custom ? path.join(configDir, '.claude.json') : path.join(os.homedir(), '.claude.json'),
     manifest: path.join(configDir, 'agent-pet-integration.json'), lifecycle: path.join(configDir, 'agent-pet-lifecycle.json'),
-    lock: path.join(configDir, 'agent-pet-integration.lock') };
+    notebook: path.join(configDir, 'agent-pet-notebook.json'), lock: path.join(configDir, 'agent-pet-integration.lock') };
 }
 async function rawFile(file) {
   try {
@@ -74,7 +76,15 @@ function validate(settings, global) {
   }
 }
 function hasMarker(group) { return JSON.stringify(group).includes(MARKER); }
+function verifyStoredMcp(mcp, message) {
+  try { stdioMcp(mcp); }
+  catch (error) {
+    if (error.code === 'INVALID_OPTIONS') fail('INVALID_CONFIG', message);
+    throw error;
+  }
+}
 function verifyManifest(manifest) {
+  managedMcpName(manifest);
   if (manifest.version !== 1 || !object(manifest.hooks) || !object(manifest.mcp) || !object(manifest.original)
       || !Array.isArray(manifest.original.events) || typeof manifest.original.hooks !== 'boolean' || typeof manifest.original.mcp !== 'boolean'
       || (own(manifest, 'hooksManagedBy') && manifest.hooksManagedBy !== 'lifecycle')
@@ -83,11 +93,11 @@ function verifyManifest(manifest) {
   for (const group of Object.values(manifest.hooks)) {
     if (!object(group) || !Array.isArray(group.hooks) || !hasMarker(group)) fail('INVALID_CONFIG', 'AgentPet Hook 安装记录损坏。');
   }
+  verifyStoredMcp(manifest.mcp, 'AgentPet MCP 安装记录损坏。');
 }
-function conflicts(settings, global, manifest) {
-  const result = [];
+function conflicts(settings, global, manifest, notebook) {
+  const result = mcpConflicts(global, manifest, notebook) ? [`mcpServers.${MCP_NAME}`] : [];
   if (!manifest) {
-    if (own(global.mcpServers ?? {}, 'agent-pet')) result.push('mcpServers.agent-pet');
     for (const [event, groups] of Object.entries(settings.hooks ?? {})) if (groups.some(hasMarker)) result.push(`hooks.${event}`);
     if (JSON.stringify(settings.statusLine ?? '').includes('agent-pet:statusline:v1')) result.push('statusLine');
     return result;
@@ -97,21 +107,19 @@ function conflicts(settings, global, manifest) {
     if (groups.filter(group => equal(group, expected)).length !== 1 || groups.filter(hasMarker).length !== 1) result.push(`hooks.${event}`);
   }
   for (const [event, groups] of Object.entries(settings.hooks ?? {})) if (!own(manifest.hooks, event) && groups.some(hasMarker)) result.push(`hooks.${event}`);
-  if (!equal(global.mcpServers?.['agent-pet'], manifest.mcp)) result.push('mcpServers.agent-pet');
   if (manifest.statusLine && !equal(settings.statusLine, manifest.statusLine.installed)) result.push('statusLine');
   return result;
 }
 async function load(paths) {
-  const [settings, global, record, lifecycleRecord] = await Promise.all([read(paths.settings), read(paths.mcp), read(paths.manifest), read(paths.lifecycle)]);
-  validate(settings.value, global.value);
-  const manifest = record.raw === null ? null : record.value;
+  const [settings, lifecycleRecord, shared] = await Promise.all([read(paths.settings), read(paths.lifecycle), loadNotebook(paths)]);
+  validate(settings.value, {});
   const lifecycle = lifecycleRecord.raw === null ? null : lifecycleRecord.value;
-  if (manifest) verifyManifest(manifest);
   if (lifecycle) verifyLifecycleManifest(lifecycle);
-  return { settings, global, record, manifest, lifecycleRecord, lifecycle, conflicts: conflicts(settings.value, global.value, manifest) };
+  return { ...shared, settings, lifecycleRecord, lifecycle, conflicts: conflicts(settings.value, shared.global.value, shared.manifest, shared.notebook) };
 }
 function summary(paths, loaded) {
-  const state = loaded.conflicts.length ? (loaded.manifest ? 'modified' : 'conflict') : loaded.manifest ? 'installed' : 'not-installed';
+  const repairable = !loaded.conflicts.length && loaded.manifest && loaded.mcpState === 'missing';
+  const state = loaded.conflicts.length ? (loaded.manifest ? 'modified' : 'conflict') : repairable ? 'repairable' : loaded.manifest ? 'installed' : 'not-installed';
   const warnings = ['需要支持 Hook exec form 的 Claude Code；已核对 2.1.309。CLI 与 VSCode 必须使用同一个配置目录。', '项目级配置、企业策略或禁用 Hook/MCP 的设置仍可能覆盖用户级接入；这里不修改审批权限。'];
   if (loaded.settings.value.disableAllHooks) warnings.push('用户配置 disableAllHooks 已开启，接入事件不会执行。');
   return { ok: !loaded.conflicts.length, state, configured: state === 'installed', changed: false, paths, conflicts: loaded.conflicts, warnings, statuslineEnabled: Boolean(loaded.manifest?.statusLine) };
@@ -122,13 +130,16 @@ function desired(options) {
   const eventsDir = absolute(options.eventsDir, 'eventsDir');
   const source = options.mcpConfig?.mcpServers;
   requireObject(source, 'mcpConfig.mcpServers');
-  const server = source['agent-pet'] ?? source['agent-pet-notebook'];
+  const server = stdioMcp(source[MCP_NAME] ?? source[LEGACY_MCP_NAME]);
+  const hook = { type: 'command', command: nodePath, args: ['-e', OBSERVER, bridgePath, eventsDir], timeout: 3, onFailure: 'continue' };
+  return { hooks: Object.fromEntries(EVENTS.map(event => [event, { hooks: [clone(hook)] }])), mcp: server };
+}
+function stdioMcp(server) {
   requireObject(server, 'AgentPet MCP');
   if (typeof server.command !== 'string' || !server.command || !Array.isArray(server.args) || !server.args.every(x => typeof x === 'string')
       || (own(server, 'env') && (!object(server.env) || !Object.values(server.env).every(x => typeof x === 'string')))
       || (own(server, 'type') && server.type !== 'stdio')) fail('INVALID_OPTIONS', '需要 notebookMcpConfig 返回的 stdio MCP 配置。');
-  const hook = { type: 'command', command: nodePath, args: ['-e', OBSERVER, bridgePath, eventsDir], timeout: 3, onFailure: 'continue' };
-  return { hooks: Object.fromEntries(EVENTS.map(event => [event, { hooks: [clone(hook)] }])), mcp: clone(server) };
+  return clone(server);
 }
 async function plan(options, paths, loaded) {
   if (loaded.conflicts.length) fail('CONFLICT', '同名项冲突或 AgentPet 项已被用户修改；请检查状态和备份，不会覆盖。');
@@ -146,14 +157,16 @@ async function plan(options, paths, loaded) {
       settings.hooks ??= {};
       for (const [event, group] of Object.entries(expected.hooks)) (settings.hooks[event] ??= []).push(clone(group));
     }
-    if (!equal(manifest.hooks, expected.hooks) || !equal(manifest.mcp, expected.mcp)) fail('OPTIONS_CHANGED', '接入路径或 MCP 配置发生变化；请先卸载旧接入，再安装。');
+    if (!equal(manifest.hooks, expected.hooks) || (!loaded.notebook && loaded.mcpState !== 'missing' && !equal(manifest.mcp, expected.mcp))) fail('OPTIONS_CHANGED', '接入路径或 MCP 配置发生变化；请先卸载旧接入，再安装。');
+    manifest.mcp = clone(expected.mcp);
   } else {
     manifest = { version: 1, ...expected, ...(lifecycleManaged ? { hooksManagedBy: 'lifecycle' } : {}), original: { hooks: own(settings, 'hooks'), events: Object.keys(settings.hooks ?? {}), mcp: own(global, 'mcpServers') } };
     if (Object.keys(expected.hooks).length) settings.hooks ??= {};
     for (const [event, group] of Object.entries(expected.hooks)) (settings.hooks[event] ??= []).push(clone(group));
-    global.mcpServers ??= {};
-    global.mcpServers['agent-pet'] = clone(expected.mcp);
   }
+  setManagedMcp(global, loaded.manifest ?? loaded.notebook, expected.mcp);
+  manifest.mcpName = MCP_NAME;
+  const notebook = loaded.notebook ? { ...clone(loaded.notebook), mcpName: MCP_NAME, mcp: clone(expected.mcp) } : null;
   if (options.enableStatusline !== undefined && typeof options.enableStatusline !== 'boolean') fail('INVALID_OPTIONS', 'enableStatusline 必须是布尔值。');
   if (options.enableStatusline === true) {
     const { makeStatusline } = await import('./statusline-bridge.mjs');
@@ -163,8 +176,8 @@ async function plan(options, paths, loaded) {
     manifest.statusLine = { original: original ?? null, installed };
     settings.statusLine = installed;
   }
-  const preview = { hooks: Object.fromEntries(Object.entries(expected.hooks).map(([event, group]) => [event, [group]])), mcpServers: { 'agent-pet': expected.mcp }, ...(manifest.statusLine ? { statusLine: manifest.statusLine.installed } : {}) };
-  return { settings, global, manifest, preview };
+  const preview = { hooks: Object.fromEntries(Object.entries(expected.hooks).map(([event, group]) => [event, [group]])), mcpServers: { [MCP_NAME]: expected.mcp }, ...(manifest.statusLine ? { statusLine: manifest.statusLine.installed } : {}) };
+  return { settings, global, manifest, notebook, preview };
 }
 async function guarded(options, operation) {
   let paths;
@@ -301,6 +314,99 @@ export async function removeClaudeLifecycle(options = {}) {
   });
 }
 
+// Notebook owns only the shared agent-pet-notebook MCP, never settings or lifecycle hooks.
+// A second manifest records explicit notebook consent, so removing full integration
+// cannot remove that connection. Both owners' MCP snapshots move in one transaction.
+function managedMcpName(manifest) {
+  // Shipped version-1 records without a name always owned the old key. Never infer
+  // ownership from matching values or whichever key happens to exist on disk.
+  if (!own(manifest, 'mcpName')) return LEGACY_MCP_NAME;
+  if (![MCP_NAME, LEGACY_MCP_NAME].includes(manifest.mcpName)) fail('INVALID_CONFIG', 'MCP 安装记录名称无效，需手动检查备份。');
+  return manifest.mcpName;
+}
+function verifyNotebookManifest(manifest) {
+  if (manifest.version !== 1 || !object(manifest.mcp)) fail('INVALID_CONFIG', '记事板安装记录损坏，需手动检查备份。');
+  managedMcpName(manifest);
+  verifyStoredMcp(manifest.mcp, '记事板 MCP 安装记录损坏。');
+}
+function managedMcpState(global, manifest, notebook) {
+  const servers = global.mcpServers ?? {};
+  const owners = [manifest, notebook].filter(Boolean);
+  const present = [MCP_NAME, LEGACY_MCP_NAME].filter(name => own(servers, name));
+  // Matching values never establish ownership. With records, both owners must
+  // agree before a missing entry can be repaired by an explicit action.
+  if (!owners.length) return present.length ? 'conflict' : 'absent';
+  const ownerName = managedMcpName(owners[0]);
+  if (owners.some(owner => managedMcpName(owner) !== ownerName || !equal(owner.mcp, owners[0].mcp))) return 'conflict';
+  if (!present.length) return 'missing';
+  if (present.length !== 1 || present[0] !== ownerName || !equal(servers[ownerName], owners[0].mcp)) return 'conflict';
+  return 'installed';
+}
+function mcpConflicts(global, manifest, notebook) {
+  return managedMcpState(global, manifest, notebook) === 'conflict';
+}
+function setManagedMcp(global, owner, mcp) {
+  // Called only after conflict checks, under the shared lock for writes. The old
+  // name may be removed only with a validated, unchanged ownership snapshot.
+  global.mcpServers ??= {};
+  if (owner && managedMcpName(owner) === LEGACY_MCP_NAME) delete global.mcpServers[LEGACY_MCP_NAME];
+  global.mcpServers[MCP_NAME] = clone(mcp);
+}
+async function loadNotebook(paths) {
+  const [global, record, notebookRecord] = await Promise.all([read(paths.mcp), read(paths.manifest), read(paths.notebook)]);
+  validate({}, global.value);
+  const manifest = record.raw === null ? null : record.value;
+  const notebook = notebookRecord.raw === null ? null : notebookRecord.value;
+  if (manifest) verifyManifest(manifest);
+  if (notebook) verifyNotebookManifest(notebook);
+  const mcpState = managedMcpState(global.value, manifest, notebook);
+  return { global, record, manifest, notebookRecord, notebook, mcpState, conflict: mcpState === 'conflict' };
+}
+function notebookSummary(loaded) {
+  if (loaded.conflict) return { ok: false, state: 'conflict', configured: false, changed: false };
+  if (loaded.mcpState === 'missing') return { ok: true, state: 'repairable', configured: false, changed: false };
+  const configured = loaded.mcpState === 'installed' && Boolean(loaded.manifest || loaded.notebook);
+  return { ok: true, state: configured ? 'installed' : 'not-installed', configured, changed: false };
+}
+async function guardedNotebook(options, operation) {
+  const result = await guarded(options, operation);
+  // Do not expose account data, MCP launch arguments, config paths or raw errors.
+  return { ok: result.ok, state: result.state, configured: result.configured ?? false, changed: result.changed,
+    ...(result.backups ? { backups: result.backups } : {}) };
+}
+/** Read-only disk status; an existing full install counts, without claiming ownership. */
+export async function getClaudeNotebookStatus(options = {}) {
+  return guardedNotebook(options, async paths => !await detected(paths) ? notDetected() : notebookSummary(await loadNotebook(paths)));
+}
+/** Explicit MCP-only connection. Does not even open settings.json. */
+export async function installClaudeNotebook(options = {}) {
+  return guardedNotebook(options, async paths => {
+    if (!await detected(paths)) return notDetected();
+    const initial = await loadNotebook(paths);
+    const first = notebookSummary(initial);
+    if (!first.ok) return first;
+    const mcp = stdioMcp(options.notebookMcpConfig);
+    // Exact repeats are read-only, even on a profile that cannot create a lock.
+    // Full-only ownership still needs an explicit notebook claim under the lock.
+    if (initial.mcpState === 'installed' && initial.notebook && managedMcpName(initial.notebook) === MCP_NAME && equal(initial.notebook.mcp, mcp)) return { ...first, backups: [] };
+    return locked(paths, async () => {
+      const loaded = await loadNotebook(paths);
+      const status = notebookSummary(loaded);
+      if (!status.ok) return status;
+      const global = clone(loaded.global.value);
+      setManagedMcp(global, loaded.manifest ?? loaded.notebook, mcp);
+      const notebook = { ...(loaded.notebook ? clone(loaded.notebook) : { version: 1 }), mcpName: MCP_NAME, mcp };
+      const manifest = loaded.manifest ? { ...clone(loaded.manifest), mcpName: MCP_NAME, mcp } : null;
+      const changed = !equal(global, loaded.global.value) || !equal(notebook, loaded.notebook) || !equal(manifest, loaded.manifest);
+      const backups = await commit(paths, [
+        { snapshot: loaded.global, value: global }, { snapshot: loaded.record, value: manifest },
+        { snapshot: loaded.notebookRecord, value: notebook },
+      ]);
+      return { ok: true, state: 'installed', configured: true, changed, backups };
+    }, false);
+  });
+}
+
 /** Read-only. Only configDir is required when using an isolated/custom profile. */
 export async function getClaudeIntegrationStatus(options = {}) {
   return guarded(options, async paths => summary(paths, await load(paths)));
@@ -377,7 +483,11 @@ export async function installClaudeIntegration(options = {}) {
       const loaded = await load(paths);
       const next = await plan(options, paths, loaded);
       const changed = !equal(next.settings, loaded.settings.value) || !equal(next.global, loaded.global.value) || !equal(next.manifest, loaded.manifest);
-      const backups = await commit(paths, [{ snapshot: loaded.lifecycleRecord, value: loaded.lifecycle }, { snapshot: loaded.settings, value: next.settings }, { snapshot: loaded.global, value: next.global }, { snapshot: loaded.record, value: next.manifest }]);
+      const backups = await commit(paths, [
+        { snapshot: loaded.lifecycleRecord, value: loaded.lifecycle }, { snapshot: loaded.settings, value: next.settings },
+        { snapshot: loaded.global, value: next.global }, { snapshot: loaded.record, value: next.manifest },
+        { snapshot: loaded.notebookRecord, value: next.notebook },
+      ]);
       return { ...summary(paths, await load(paths)), changed, backups, preview: next.preview };
     });
   });
@@ -398,13 +508,18 @@ export async function removeClaudeIntegration(options = {}) {
         if (!settings.hooks[event].length && !manifest.original.events.includes(event)) delete settings.hooks[event];
       }
       if (settings.hooks && !Object.keys(settings.hooks).length && !manifest.original.hooks) delete settings.hooks;
-      delete global.mcpServers['agent-pet'];
-      if (!Object.keys(global.mcpServers).length && !manifest.original.mcp) delete global.mcpServers;
+      if (!loaded.notebook && object(global.mcpServers)) {
+        delete global.mcpServers[managedMcpName(manifest)];
+        if (!Object.keys(global.mcpServers).length && !manifest.original.mcp) delete global.mcpServers;
+      }
       if (manifest.statusLine) {
         if (manifest.statusLine.original === null) delete settings.statusLine;
         else settings.statusLine = clone(manifest.statusLine.original);
       }
-      const backups = await commit(paths, [{ snapshot: loaded.settings, value: settings }, { snapshot: loaded.global, value: global }, { snapshot: loaded.record, value: null }]);
+      const backups = await commit(paths, [
+        { snapshot: loaded.notebookRecord, value: loaded.notebook }, { snapshot: loaded.settings, value: settings },
+        { snapshot: loaded.global, value: global }, { snapshot: loaded.record, value: null },
+      ]);
       return { ...summary(paths, await load(paths)), changed: true, backups };
     });
   });

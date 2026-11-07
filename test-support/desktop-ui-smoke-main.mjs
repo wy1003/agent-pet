@@ -15,6 +15,7 @@ import { AppUpdater } from "../desktop/app-updater.mjs";
 import { CodexUsageProvider } from "../desktop/usage/codex-usage-provider.mjs";
 import { PhrasePoolGenerator } from "../desktop/phrase-generator.mjs";
 import { ClaudeTranscriptDiscovery } from "../src/claude-discovery.mjs";
+import { NotebookCodexConnection } from "../desktop/notebook/mcp/codex-connection.mjs";
 
 // Test driver only: observe native windows while exercising the real entrypoint,
 // renderer, preload, Facades and IPC. Never use these hooks in production.
@@ -75,6 +76,43 @@ for (const [type, method] of [[RemoteTaskRegistry, "load"], [NotebookMcpBridge, 
     return result;
   };
 }
+// Only the Codex configuration RPC is simulated; exercise its real connection facade,
+// backups, UI and IPC without starting a real Codex process or accessing user config.
+const codexConfigFile = path.join(root, "codex", "notebook-fixture.toml");
+fs.writeFileSync(codexConfigFile, "# isolated Codex configuration fixture\n");
+const codexConfig = { mcp_servers: { existing: { command: "fixture-codex-mcp-never-executed" } } };
+let codexConfigVersion = 1, codexConfigWrites = 0;
+const createCodexConfigRpc = () => ({
+  async initialize() {}, close() {},
+  async request(method, params) {
+    if (method === "config/read") return {
+      config: structuredClone(codexConfig),
+      layers: [{ name: { type: "user", file: codexConfigFile }, version: String(codexConfigVersion) }],
+    };
+    assert.equal(method, "config/batchWrite");
+    assert.equal(params.filePath, codexConfigFile);
+    assert.equal(params.expectedVersion, String(codexConfigVersion));
+    const entry = codexConfig.mcp_servers["agent-pet-notebook"] ||= {};
+    for (const edit of params.edits) {
+      assert.ok(edit.keyPath.startsWith("mcp_servers.agent-pet-notebook."));
+      const key = edit.keyPath.slice("mcp_servers.agent-pet-notebook.".length);
+      if (key === "env.ELECTRON_RUN_AS_NODE") entry.env = { ELECTRON_RUN_AS_NODE: edit.value };
+      else entry[key] = edit.value;
+    }
+    codexConfigVersion++; codexConfigWrites++;
+    fs.writeFileSync(codexConfigFile, JSON.stringify(codexConfig));
+    return { status: "ok" };
+  },
+});
+for (const method of ["status", "connect"]) {
+  const original = NotebookCodexConnection.prototype[method];
+  NotebookCodexConnection.prototype[method] = function (...args) {
+    this.resolveExecutable = async () => path.join(root, "fixture-codex-never-executed.exe");
+    this.createRpc = createCodexConfigRpc;
+    return original.apply(this, args);
+  };
+}
+
 let allowConfirmation = false, generationAttempts = 0;
 app.setLoginItemSettings = () => { checks.push("login-item changes intercepted"); };
 app.getLoginItemSettings = () => ({ openAtLogin: false, wasOpenedAtLogin: false });
@@ -258,7 +296,8 @@ try {
     assert.equal(configured.hooks[name].flatMap(group => group.hooks).filter(hook => JSON.stringify(hook).includes("agent-pet:hook:v1")).length, 1);
   }
   assert.deepEqual(readMcp().mcpServers.existing, initialMcp.mcpServers.existing);
-  assert.ok(readMcp().mcpServers["agent-pet"]);
+  assert.ok(readMcp().mcpServers["agent-pet-notebook"]);
+  assert.equal(readMcp().mcpServers["agent-pet"], undefined);
   assert.match(JSON.stringify(configured.statusLine), /agent-pet:statusline:v1/);
   checks.push("optional enhancement cancellation preserves config; installation adds MCP and three optional event Hooks without duplicating five automatic Hooks");
 
@@ -317,6 +356,97 @@ try {
   assert.deepEqual(readClaude(), automaticConfig);
   assert.equal(JSON.parse(fs.readFileSync(path.join(userData, "preferences.json"), "utf8")).claude.autoLifecycleHooks, true);
   assert.equal((await state(settings)).preferences.claude.nodePath, "");
+
+  await click(settings, '[data-page="notebook"]');
+  assert.ok(await evaluate(settings, "Boolean(document.querySelector('#connect-notebook-codex') && document.querySelector('#connect-notebook-claude'))"));
+  await evaluate(settings, "document.querySelector('#connect-notebook-claude').scrollIntoView({block:'center'})");
+  const beforeNotebookSettings = fs.readFileSync(settingsFile, "utf8");
+  allowConfirmation = false;
+  const dialogCount = dialogs.length;
+  const buttonStyles = await evaluate(settings, `['codex', 'claude'].map(provider => {
+    const button = document.querySelector('#connect-notebook-' + provider);
+    const style = getComputedStyle(button);
+    return { className: button.className, whiteSpace: style.whiteSpace,
+      fontSize: style.fontSize, borderRadius: style.borderRadius, padding: style.padding };
+  })`);
+  assert.deepEqual(buttonStyles[1], buttonStyles[0], "notebook connection buttons use the same visual rules");
+  await click(settings, "#connect-notebook-claude");
+  await until(() => evaluate(settings, "document.querySelector('#connect-notebook-claude').disabled"), disabled => !disabled, "Claude direct connection settled");
+  assert.equal(dialogs.length, dialogCount, "Claude notebook connection must not show an extra dialog");
+  await until(() => evaluate(settings, "window.companion.getNotebookClaudeConnection()"), result => result.ok && result.configured, "Claude notebook configuration ready");
+  await until(() => evaluate(settings, "document.querySelector('#connect-notebook-claude').disabled"), disabled => !disabled, "Claude notebook button reset");
+  assert.equal(fs.readFileSync(settingsFile, "utf8"), beforeNotebookSettings);
+  assert.deepEqual(readMcp().mcpServers.existing, initialMcp.mcpServers.existing);
+  assert.deepEqual(Object.keys(readMcp().mcpServers).sort(), ["agent-pet-notebook", "existing"]);
+  assert.match(await evaluate(settings, "document.querySelector('#notebook-claude-mcp-status').textContent"), /配置已完成/);
+  const notebookMcp = fs.readFileSync(mcpFile, "utf8");
+  const notebookMcpStat = fs.statSync(mcpFile).mtimeMs;
+  await click(settings, "#connect-notebook-claude");
+  await until(() => evaluate(settings, "document.querySelector('#connect-notebook-claude').disabled"), disabled => !disabled, "Claude notebook repeat settled");
+  assert.equal(fs.readFileSync(mcpFile, "utf8"), notebookMcp);
+  assert.equal(fs.statSync(mcpFile).mtimeMs, notebookMcpStat);
+  assert.match(await evaluate(settings, "document.querySelector('#notebook-claude-mcp-status').textContent"), /无需重复添加/);
+  await click(settings, "#connect-notebook-codex");
+  await until(() => evaluate(settings, "window.companion.getNotebookCodexConnection()"), result => result.ok && result.configured, "Codex notebook configuration ready");
+  await until(() => evaluate(settings, "document.querySelector('#connect-notebook-codex').disabled"), disabled => !disabled, "Codex notebook button reset");
+  assert.equal(codexConfigWrites, 1);
+  assert.deepEqual(codexConfig.mcp_servers.existing, { command: "fixture-codex-mcp-never-executed" });
+  assert.equal(fs.readFileSync(mcpFile, "utf8"), notebookMcp);
+  await click(settings, "#connect-notebook-codex");
+  await until(() => evaluate(settings, "document.querySelector('#connect-notebook-codex').disabled"), disabled => !disabled, "Codex notebook repeat settled");
+  assert.equal(codexConfigWrites, 1);
+  assert.match(await evaluate(settings, "document.querySelector('#notebook-claude-mcp-status').textContent"), /无需重复添加/);
+  const configuredButtonWidths = await evaluate(settings, `['codex', 'claude'].map(provider =>
+    document.querySelector('#connect-notebook-' + provider).getBoundingClientRect().width)`);
+  assert.ok(Math.abs(configuredButtonWidths[0] - configuredButtonWidths[1]) < 1, "configured notebook buttons have equal visual width");
+  await fsp.writeFile(path.join(output, "notebook-connections-dark.png"), (await settings.webContents.capturePage()).toPNG());
+  await evaluate(settings, "window.companion.updateSettings({appearance:{theme:'light'}})");
+  await until(() => evaluate(settings, "matchMedia('(prefers-color-scheme: dark)').matches"), dark => !dark, "notebook light theme");
+  await fsp.writeFile(path.join(output, "notebook-connections-light.png"), (await settings.webContents.capturePage()).toPNG());
+  assert.equal(dialogs.length, dialogCount, "both notebook buttons configure directly without dialogs");
+  allowConfirmation = true;
+  const fullAfterNotebook = await evaluate(settings, "window.companion.installClaudeIntegration()");
+  assert.equal(fullAfterNotebook.ok, true, JSON.stringify(fullAfterNotebook));
+  const removeFullAfterNotebook = await evaluate(settings, "window.companion.removeClaudeIntegration()");
+  assert.equal(removeFullAfterNotebook.ok, true, JSON.stringify(removeFullAfterNotebook));
+  assert.equal((await evaluate(settings, "window.companion.getNotebookClaudeConnection()")).configured, true);
+  assert.deepEqual(readMcp(), JSON.parse(notebookMcp));
+  assert.deepEqual(readClaude(), JSON.parse(beforeNotebookSettings));
+  // Reproduce the already-delivered 0.12.0 notebook-only format in this isolated profile.
+  const notebookManifestFile = path.join(process.env.CLAUDE_CONFIG_DIR, "agent-pet-notebook.json");
+  const legacyManifest = JSON.parse(fs.readFileSync(notebookManifestFile, "utf8"));
+  delete legacyManifest.mcpName;
+  const legacyMcp = readMcp();
+  legacyMcp.mcpServers["agent-pet"] = legacyMcp.mcpServers["agent-pet-notebook"];
+  delete legacyMcp.mcpServers["agent-pet-notebook"];
+  await fsp.writeFile(notebookManifestFile, JSON.stringify(legacyManifest));
+  await fsp.writeFile(mcpFile, JSON.stringify(legacyMcp));
+  const legacyMcpBytes = fs.readFileSync(mcpFile, "utf8");
+  const legacyManifestBytes = fs.readFileSync(notebookManifestFile, "utf8");
+  await evaluate(settings, "window.companion.getNotebookClaudeConnection()");
+  assert.equal(fs.readFileSync(mcpFile, "utf8"), legacyMcpBytes, "status must not migrate old configuration");
+  assert.equal(fs.readFileSync(notebookManifestFile, "utf8"), legacyManifestBytes);
+  const beforeMigrationDialogs = dialogs.length;
+  await click(settings, "#connect-notebook-claude");
+  await until(() => evaluate(settings, "document.querySelector('#connect-notebook-claude').disabled"), disabled => !disabled, "legacy notebook migration settled");
+  assert.equal(dialogs.length, beforeMigrationDialogs);
+  assert.deepEqual(readMcp(), JSON.parse(notebookMcp), "explicit connection migrates the owned legacy name without duplicates");
+  assert.equal(JSON.parse(fs.readFileSync(notebookManifestFile, "utf8")).mcpName, "agent-pet-notebook");
+  assert.deepEqual(readClaude(), JSON.parse(beforeNotebookSettings));
+  const missingManagedMcp = readMcp();
+  delete missingManagedMcp.mcpServers["agent-pet-notebook"];
+  await fsp.writeFile(mcpFile, JSON.stringify(missingManagedMcp));
+  const beforeMissingStatus = fs.readFileSync(mcpFile, "utf8");
+  const missingStatus = await evaluate(settings, "window.companion.getNotebookClaudeConnection()");
+  assert.equal(missingStatus.configured, false);
+  assert.equal(fs.readFileSync(mcpFile, "utf8"), beforeMissingStatus, "status must not restore a missing managed MCP");
+  const beforeRestoreDialogs = dialogs.length;
+  await click(settings, "#connect-notebook-claude");
+  await until(() => evaluate(settings, "document.querySelector('#connect-notebook-claude').disabled"), disabled => !disabled, "missing managed notebook restoration settled");
+  assert.equal(dialogs.length, beforeRestoreDialogs);
+  assert.deepEqual(readMcp(), JSON.parse(notebookMcp), "explicit connection restores the missing managed MCP");
+  assert.match(await evaluate(settings, "document.querySelector('#notebook-claude-mcp-status').textContent"), /配置已完成/);
+  checks.push("Notebook settings: matching Codex/Claude button styles and direct no-dialog flow, canonical agent-pet-notebook name, changed/repeat feedback, MCP-only writes, duplicate no-op, source coexistence, full integration removal preserves notebook, legacy owned name migrates only on click, missing managed MCP restores only on click; Codex config RPC fixture only");
   assert.equal(generationAttempts, 0);
   checks.push("GUI toggle removes only owned lifecycle Hooks, persists disabled/enabled preference, restores Hooks with Node still blank; zero model generation attempts");
   await fsp.writeFile(path.join(output, "report.json"), JSON.stringify({ ok: true, checks, dialogs, rendererErrors, blockedNetwork: [...new Set(blockedNetwork)],

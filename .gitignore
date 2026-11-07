@@ -19,6 +19,7 @@ Thumbs.db
 build/icon.ico
 
 # Local development planning and handoff notes
+/.claude/
 TASKS.md
 HANDOFF.md
 /docs/superpowers/

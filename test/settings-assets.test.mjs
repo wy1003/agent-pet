@@ -3,6 +3,14 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { createCollectorServer } from "../src/server.mjs";
 import { petPreview } from "../public/pet-library-view.js";
+import { readFile } from "node:fs/promises";
+
+test('notebook connection action columns have identical bounded widths', async () => {
+  const css = await readFile(new URL('../public/settings.css', import.meta.url), 'utf8');
+  const rule = css.match(/\.notebook-connection-actions\s*\{([^}]+)\}/)[1];
+  assert.match(rule, /(?:^|;)\s*width:\s*\d+(?:px|rem)/);
+  assert.match(rule, /max-width:\s*100%/);
+});
 
 for (const pageName of ["settings", "notebook", "pet-menu"]) {
 test(`the real HTTP service serves ${pageName} and every transitive static module import`, async t => {
@@ -35,9 +43,18 @@ test(`the real HTTP service serves ${pageName} and every transitive static modul
   }
   for (const entry of entries) await visit(new URL(entry, base).href);
   if (pageName === "settings") {
-    for (const id of ["claude-status", "claude-install", "claude-remove", "claude-preview"]) {
+    for (const id of ["claude-status", "claude-install", "claude-remove", "claude-preview",
+      "connect-notebook-claude", "notebook-claude-mcp-status", "connect-notebook-codex", "notebook-mcp-status", "copy-notebook-mcp"]) {
       assert.ok(html.includes(`id="${id}"`), `Claude settings exposes ${id}`);
     }
+    const codexDescription = html.match(/id="notebook-mcp-status" role="status">([^<]*)/)[1];
+    assert.equal(html.match(/id="notebook-claude-mcp-status" role="status">([^<]*)/)[1], codexDescription);
+    const css = await (await fetch(`${base}/settings.css`)).text();
+    const nowrapRules = [...css.matchAll(/([^{}]+)\{[^{}]*white-space:\s*nowrap[^{}]*\}/g)].map(match => match[1]);
+    assert.ok(nowrapRules.some(selectors => selectors.includes('#connect-notebook-claude')), 'Claude connection button stays on one line like Codex');
+    const actionsRule = css.match(/\.notebook-connection-actions\s*\{([^}]+)\}/)[1];
+    assert.match(actionsRule, /(?:^|;)\s*width:\s*\d+(?:px|rem)/, 'shared action columns have equal width, not content-dependent width');
+    assert.match(actionsRule, /max-width:\s*100%/, 'action column remains bounded in narrow windows');
     assert.doesNotMatch(html, /data-claude-setting="usageProviderId"/);
     assert.match(html, /生命周期 Hook 自动确认完成/);
     assert.match(html, /data-claude-setting="autoLifecycleHooks"/);

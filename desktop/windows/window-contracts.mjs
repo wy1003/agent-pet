@@ -13,6 +13,7 @@
  * @property {(bounds: Object) => void} setBounds
  * @property {(value: boolean) => void} setAlwaysOnTop
  * @property {(event: Object) => boolean} ownsSender
+ * @property {(event: Object) => boolean} ownsMainFrame Main-frame-only authorization; notebook connection IPC uses the settings facade, never another window's facade.
  *
  * @typedef {WindowPort & {render: (state: Object) => Promise<boolean>,
  * acknowledge: (revision: number) => void}} PetMenuWindowPort

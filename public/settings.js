@@ -1745,6 +1745,65 @@ notebookConnect.addEventListener("click", async () => {
 });
 void checkNotebookConnection();
 
+let notebookClaudeRevision = 0;
+let notebookClaudeBusy = false;
+const notebookClaudeConnect = document.querySelector("#connect-notebook-claude");
+const notebookClaudeStatus = document.querySelector("#notebook-claude-mcp-status");
+const notebookClaudeMessages = {
+  installed: "记事板配置已就绪。可在 Claude Code 的 MCP 列表中查看连接状态。",
+  "not-installed": "自动填写记事板连接配置。使用时保持 Agent Pet 运行。",
+  "not-detected": "未检测到 Claude Code 的用户配置。请先安装并启动 Claude Code，再重试。",
+  conflict: "Claude Code 记事板配置存在同名连接或管理记录冲突，未覆盖现有配置。请检查并处理冲突后重试。",
+  error: "暂时无法完成 Claude Code 配置操作。请检查配置文件是否有效、目录权限是否可写，并确认 Agent Pet 记事板已就绪后重试。",
+};
+function renderNotebookClaudeConnection(result) {
+  const state = result?.state;
+  const ready = result?.ok && result.configured && state === "installed";
+  notebookClaudeStatus.textContent = ready ? notebookClaudeMessages.installed
+    : ["not-installed", "not-detected", "conflict"].includes(state) ? notebookClaudeMessages[state]
+      : notebookClaudeMessages.error;
+  notebookClaudeConnect.textContent = ready ? "检查连接配置"
+    : state === "not-installed" ? "一键连接 Claude Code" : "重试连接 Claude Code";
+}
+async function checkNotebookClaudeConnection() {
+  if (!window.companion?.getNotebookClaudeConnection) return;
+  const revision = ++notebookClaudeRevision;
+  try {
+    const result = await window.companion.getNotebookClaudeConnection();
+    if (revision === notebookClaudeRevision) renderNotebookClaudeConnection(result);
+  } catch {
+    if (revision === notebookClaudeRevision) renderNotebookClaudeConnection({ state: "error" });
+  }
+}
+notebookClaudeConnect.addEventListener("click", async () => {
+  if (notebookClaudeBusy) return;
+  notebookClaudeBusy = true;
+  const revision = ++notebookClaudeRevision;
+  notebookClaudeConnect.disabled = true;
+  notebookClaudeConnect.textContent = "正在配置…";
+  try {
+    if (!window.companion?.connectNotebookToClaude) {
+      notebookClaudeStatus.textContent = "请先重启 Agent Pet，让一键连接 Claude Code 功能生效。";
+      notebookClaudeConnect.textContent = "重试连接 Claude Code";
+      return;
+    }
+    const result = await window.companion.connectNotebookToClaude();
+    if (revision !== notebookClaudeRevision) return;
+    if (result?.ok && result.configured && result.state === "installed") {
+      notebookClaudeStatus.textContent = result.changed
+        ? "配置已完成！请在 Claude Code 的 MCP 列表中重启此连接，或重启 Claude Code 后使用。"
+        : "配置已就绪，无需重复添加。若工具还没出现，请在 Claude Code 中重启连接。";
+      notebookClaudeConnect.textContent = "检查连接配置";
+    } else renderNotebookClaudeConnection(result);
+  } catch {
+    if (revision === notebookClaudeRevision) renderNotebookClaudeConnection({ state: "error" });
+  } finally {
+    notebookClaudeBusy = false;
+    notebookClaudeConnect.disabled = false;
+  }
+});
+void checkNotebookClaudeConnection();
+
 document.querySelector("#copy-notebook-mcp").addEventListener("click", async event => {
   ++notebookConnectionRevision;
   const button = event.currentTarget, status = document.querySelector("#notebook-mcp-status");

@@ -286,6 +286,36 @@ test("all tool window facades deduplicate opening, restore and recreate safely",
   }
 });
 
+test("notebook Claude IPC accepts only the settings facade main frame", async () => {
+  const { installNotebookClaudeConnectionIpc } = await import("../desktop/notebook/mcp/claude-connection.mjs");
+  const h = createWindowHarness();
+  const settings = new SettingsWindowFacade({ ...h.dependencies, productName: "Agent Pet", getIcon: () => null, isDark: () => false });
+  await settings.ensureCreated();
+  const native = h.nativeWindows.at(-1);
+  await h.notebook.ensureCreated();
+  const other = h.nativeWindows.at(-1);
+  const handlers = new Map();
+  let confirmations = 0;
+  installNotebookClaudeConnectionIpc({
+    ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+    requireSettingsMainFrame: event => { if (!settings.ownsMainFrame(event)) throw new Error("forbidden"); },
+    getConnection: () => ({ status: async () => ({ ok: true, state: "not-installed" }), connect: async () => ({ ok: true, configured: true, state: "installed" }) }),
+    confirmConnect: async () => { confirmations++; return false; },
+  });
+  const handler = handlers.get("notebook:claude-connection");
+  for (const action of ["status", "connect"]) {
+    for (const event of [{ sender: native.webContents, senderFrame: {} },
+      { sender: other.webContents, senderFrame: other.webContents.mainFrame }]) {
+      await assert.rejects(handler(event, action), /forbidden/);
+    }
+  }
+  assert.equal(confirmations, 0);
+  const trusted = { sender: native.webContents, senderFrame: native.webContents.mainFrame };
+  assert.equal((await handler(trusted, "status")).ok, true);
+  assert.equal((await handler(trusted, "connect")).configured, true);
+  assert.equal(confirmations, 0);
+});
+
 test("facade checks sender and main frame, blocks external navigation and cancels pending show", async () => {
   const h = createWindowHarness();
   const gate = deferred();

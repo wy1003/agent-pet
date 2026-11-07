@@ -1258,8 +1258,8 @@ h2 {
 }
 
 #copy-notebook-mcp { flex-shrink: 0; white-space: nowrap; }
-.notebook-connection-actions { display: flex; flex: 0 0 auto; flex-direction: column; align-items: stretch; gap: 8px; }
-#connect-notebook-codex { white-space: nowrap; }
+.notebook-connection-actions { display: flex; flex: 0 0 auto; width: 160px; max-width: 100%; flex-direction: column; align-items: stretch; gap: 8px; }
+#connect-notebook-codex, #connect-notebook-claude { white-space: nowrap; }
 
 .setting-row:has(> input[type="checkbox"]:not(:disabled)) {
   cursor: pointer;

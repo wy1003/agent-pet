@@ -100,6 +100,42 @@ test("desktop read-only options preserve the default user MCP location", async t
   assert.equal(restored.mcpServers?.["agent-pet"], undefined);
 });
 
+test("notebook Claude main wiring reuses host config and default scope without native confirmation", async () => {
+  const source = await readFile(new URL("../desktop/main.mjs", import.meta.url), "utf8");
+  const block = source.match(/  const notebookClaudeConnection = new NotebookClaudeConnection\([\s\S]*?(?=  installNotebookWindowIpc)/)?.[0];
+  assert.ok(block, "the notebook-only Claude flow is wired independently of full integration");
+  const hostConfig = () => ({ mcpServers: { "agent-pet-notebook": { command: "fixture" } } });
+  let connectionOptions, ipcOptions, response = 0;
+  const prompts = [];
+  vm.runInNewContext(block, {
+    NotebookClaudeConnection: class { constructor(options) { connectionOptions = options; } },
+    getNotebookMcpConfig: hostConfig, ipcMain: {}, requireSettingsMainFrame() {},
+    installNotebookClaudeConnectionIpc: options => { ipcOptions = options; },
+    dialog: { showMessageBox: async options => { prompts.push(options); return { response }; } },
+  });
+  assert.equal(connectionOptions.getConfig, hostConfig);
+  assert.equal(connectionOptions.getOptions, undefined, "integration owns default home and CLAUDE_CONFIG_DIR resolution");
+  assert.equal(ipcOptions.confirmConnect, undefined);
+  assert.deepEqual(prompts, []);
+  assert.doesNotMatch(block, /showMessageBox|confirmConnect/);
+  assert.doesNotMatch(block, /resolveNodeExecutable|installClaudeIntegration|configDir:/);
+});
+
+test("notebook Claude preload exposes fixed actions and never forwards renderer paths", async () => {
+  const source = await readFile(new URL("../desktop/preload.cjs", import.meta.url), "utf8");
+  const exposed = {}, calls = [];
+  vm.runInNewContext(source, { require: () => ({
+    contextBridge: { exposeInMainWorld: (key, value) => { exposed[key] = value; } },
+    ipcRenderer: { invoke: (...args) => { calls.push(args); } }, webUtils: {},
+  }) });
+  assert.equal(typeof exposed.companion.getNotebookClaudeConnection, "function");
+  assert.equal(typeof exposed.companion.connectNotebookToClaude, "function");
+  exposed.companion.getNotebookClaudeConnection({ configDir: "/attacker" });
+  exposed.companion.connectNotebookToClaude({ action: "remove", configDir: "/attacker" });
+  assert.deepEqual(calls, [["notebook:claude-connection", "status"], ["notebook:claude-connection", "connect"]]);
+  assert.equal(typeof exposed.companion.connectNotebookToCodex, "function");
+});
+
 test("installed bridge and MCP paths resolve outside asar, source paths stay unchanged", async () => {
   const { executableResourcePath } = await settings();
   assert.equal(executableResourcePath("C:/app/resources/app.asar/desktop/claude/hook-bridge.mjs"), "C:/app/resources/app.asar.unpacked/desktop/claude/hook-bridge.mjs");

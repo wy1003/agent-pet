@@ -6,6 +6,7 @@ import path from "node:path";
 import os from "node:os";
 import { readStoppedTurnText } from "./claude-transcript.mjs";
 import { ClaudeTranscriptDiscovery } from "./claude-discovery.mjs";
+import { backgroundToolUseId, claudeInputKind, finishedBackgroundTask } from "./claude-input.mjs";
 import { makeTitle } from "./text.mjs";
 import { parseRemoteRequest } from "./remote-request.mjs";
 
@@ -26,7 +27,7 @@ async function readState(file) {
 const TERMINAL = new Set(["completed", "failed", "interrupted", "unknown"]);
 const PRIORITY = { needs_input: 0, failed: 1, running: 2, queued: 3, submitted: 4, interrupted: 5, completed: 6, unknown: 7 };
 const SESSION_PRIORITY = { needs_input: 0, blocked: 1, ready: 2, running: 3, unknown: 4, idle: 5 };
-const HOOKS = new Set(["SessionStart", "UserPromptSubmit", "PermissionRequest", "Notification", "PostToolUse", "Stop", "StopFailure", "SessionEnd", "TranscriptResponse"]);
+const HOOKS = new Set(["SessionStart", "UserPromptSubmit", "PermissionRequest", "Notification", "PostToolUse", "Stop", "StopFailure", "SessionEnd", "TranscriptResponse", "Continuation", "BackgroundTaskStarted", "BackgroundTaskFinished"]);
 const HOOK_ORDER = { SessionStart: 0, UserPromptSubmit: 1, PermissionRequest: 2, Notification: 2, PostToolUse: 3, Stop: 4, StopFailure: 5, SessionEnd: 6 };
 const execution = (status) => ({ running: "in_progress", needs_input: "waiting_input" }[status] || status);
 const time = (value) => Date.parse(value) || 0;
@@ -208,21 +209,27 @@ export class ClaudeActivityCollector extends EventEmitter {
         if (!error.code) { try { await rm(file, { force: true }); } catch (cleanupError) { this.#diagnostic(cleanupError); } }
       }
     }
+    // Read transcript evidence before applying inbox Stop events. A background
+    // launch and Stop can both arrive within one poll; use their actual order.
+    let batch;
+    try {
+      batch = await this.discovery.scan();
+      records.push(...batch.events.map(event => ({ event })));
+    } catch {
+      this.#diagnostic(Object.assign(new Error("Claude automatic discovery failed"), { code: "claude_discovery_failed" }));
+    }
     records.sort((a, b) => time(a.event.timestamp) - time(b.event.timestamp)
       || (HOOK_ORDER[a.event.hook_event_name] ?? 99) - (HOOK_ORDER[b.event.hook_event_name] ?? 99));
+    let accepted = true;
     for (const { file, event } of records) {
-      try { await this.#accept(event); await rm(file, { force: true }); }
-      catch (error) { this.#diagnostic(error); }
+      try { await this.#accept(event); if (file) await rm(file, { force: true }); }
+      catch (error) { accepted = false; this.#diagnostic(error); }
     }
-    try {
-      const batch = await this.discovery.scan();
-      for (const event of batch.events) await this.#accept(event);
+    if (batch && accepted) {
       if (JSON.stringify(batch.state) !== JSON.stringify(this.discovery.snapshot())) {
         this.discovery.commit(batch.state);
         this.revision++;
       }
-    } catch (error) {
-      this.#diagnostic(Object.assign(new Error("Claude automatic discovery failed"), { code: "claude_discovery_failed" }));
     }
     await this.#supplementResponses();
     try { await this.#persist(); } catch (error) { this.#diagnostic(error); }
@@ -246,9 +253,14 @@ export class ClaudeActivityCollector extends EventEmitter {
   ingest(input) { return this.#enqueue(() => this.#accept(validate(input))); }
   async #accept(event) {
     if (event.event_id && this.seen.has(event.event_id)) { await this.#persist(); return false; }
-    if (event.agent_id || event.agent_pet_auxiliary === true || event.AGENT_PET_AUXILIARY === "1" || event.metadata?.agent_pet_auxiliary === true) return false;
+    if (event.agent_id || event.agentId || event.isSidechain || event.agent_pet_auxiliary === true || event.AGENT_PET_AUXILIARY === "1" || event.metadata?.agent_pet_auxiliary === true) return false;
     const hook = event.hook_event_name;
     if (!HOOKS.has(hook) || (hook === "Notification" && !["permission_prompt", "elicitation_dialog"].includes(event.notification_type))) return false;
+    if (hook === "UserPromptSubmit") {
+      const kind = claudeInputKind(event);
+      if (kind === "local") return false;
+      if (kind === "continuation") event = { ...event, hook_event_name: "Continuation", background_task_id: finishedBackgroundTask(event.prompt || ""), tool_use_id: backgroundToolUseId(event.prompt || "") };
+    }
     const timestamp = new Date(event.timestamp ?? this.now()).toISOString();
     let session = this.sessions.get(`claude:${event.session_id}`);
     if (!session) { session = createSession(event, timestamp); this.sessions.set(session.sessionId, session); }
@@ -265,6 +277,11 @@ export class ClaudeActivityCollector extends EventEmitter {
     const aliases = transcript ? (session._transcriptTurns ||= []) : (session._hookTurns ||= []);
     const alias = event.prompt_id && aliases.find(([id]) => id === event.prompt_id);
     if (alias) return { ...event, prompt_id: alias[1] };
+    if (event.hook_event_name === "Continuation" && !transcript) {
+      if (session._latest && event.prompt_id) aliases.push([event.prompt_id, session._latest]);
+      if (session._latest) session._hookLatest = session._latest;
+      return { ...event, prompt_id: session._latest || "unmatched-hook-turn" };
+    }
     if (event.hook_event_name !== "UserPromptSubmit") {
       if (!transcript && !event.prompt_id && session._latest && event.hook_event_name !== "SessionEnd") {
         const latest = this.tasks.get(`claude:${session.nativeSessionId}:${session._latest}`);
@@ -288,7 +305,14 @@ export class ClaudeActivityCollector extends EventEmitter {
   #apply(session, event, timestamp) {
     const hook = event.hook_event_name, prefix = `claude:${session.nativeSessionId}:`;
     const backfill = event.agent_pet_source === "transcript" && hook === "UserPromptSubmit" && !session._latest;
-    if (time(timestamp) < time(session._activity) && !backfill) return;
+    // Queued notifications retain their enqueue time, even when appended after
+    // newer foreground records. They can settle their own run without aging the
+    // task's public activity clock backwards.
+    const evidenceAt = timestamp;
+    if (time(timestamp) < time(session._activity) && !backfill) {
+      if (hook !== "BackgroundTaskFinished") return;
+      timestamp = session._activity;
+    }
     if (hook === "SessionStart") { session._owned = true; session._activity = timestamp; session.updatedAt = timestamp; return; }
     let id = event.prompt_id || session._latest, task = this.tasks.get(prefix + id);
     if (hook === "UserPromptSubmit") {
@@ -314,9 +338,26 @@ export class ClaudeActivityCollector extends EventEmitter {
       if (hook === "SessionEnd") { session._owned = false; session._releasedAt = timestamp; }
       const unresolvedTranscript = task?.status === "unknown" && task.evidenceSource === "transcript" && task.turnId === session._latest;
       if (!task || (TERMINAL.has(task.status) && !unresolvedTranscript)) { session._activity = timestamp; session.updatedAt = timestamp; return; }
-      if (hook === "TranscriptResponse") {
+      if (["BackgroundTaskStarted", "BackgroundTaskFinished", "Continuation"].includes(hook)) {
+        const pending = new Set(task.pendingBackgroundTasks || []);
+        const runs = new Map(Object.entries(task.backgroundTaskRuns || {}));
+        if (typeof event.background_task_id === "string") {
+          const key = event.background_task_id, run = runs.get(key);
+          if (hook === "BackgroundTaskStarted") {
+            pending.add(key); runs.set(key, { toolUseId: event.tool_use_id || null, startedAt: evidenceAt });
+          } else if ((!run || time(evidenceAt) >= time(run.startedAt))
+            && (!run?.toolUseId || !event.tool_use_id || run.toolUseId === event.tool_use_id)) {
+            pending.delete(key); runs.delete(key);
+          }
+        }
+        Object.assign(task, { pendingBackgroundTasks: [...pending], backgroundTaskRuns: Object.fromEntries(runs), status: "running", phase: "working", waitingFor: null, canAcknowledge: false, completionPending: false });
+      } else if (hook === "Stop" && task.pendingBackgroundTasks?.length) {
+        // Stop ends the foreground response, not the still-running child work.
+        // A later child notification must be followed by a fresh parent Stop.
+        Object.assign(task, { status: "running", phase: "working", waitingFor: null, canAcknowledge: false, completionPending: false });
+      } else if (hook === "TranscriptResponse") {
         // A text message without end_turn is not proof the turn finished.
-        if (task.hookObserved) return;
+        if (task.hookObserved || task.pendingBackgroundTasks?.length) return;
         Object.assign(task, { status: "unknown", phase: "unknown", completionPending: true, canAcknowledge: true, waitingFor: null, latestResponse: event.last_assistant_message || "" });
       } else if (hook === "PermissionRequest" || hook === "Notification") {
         Object.assign(task, { status: "needs_input", phase: event.notification_type === "elicitation_dialog" ? "waiting_answer" : "waiting_approval", waitingFor: "user" });

@@ -35,6 +35,8 @@ contextBridge.exposeInMainWorld("companion", {
   copyNotebookMcpConfig: () => ipcRenderer.invoke("notebook:mcp-config"),
   getNotebookCodexConnection: () => ipcRenderer.invoke("notebook:codex-connection", "status"),
   connectNotebookToCodex: () => ipcRenderer.invoke("notebook:codex-connection", "connect"),
+  getNotebookClaudeConnection: () => ipcRenderer.invoke("notebook:claude-connection", "status"),
+  connectNotebookToClaude: () => ipcRenderer.invoke("notebook:claude-connection", "connect"),
   onNotebookChanged: (callback) => {
     const listener = () => callback();
     ipcRenderer.on("notebook:changed", listener);
